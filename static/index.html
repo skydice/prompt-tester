@@ -377,23 +377,33 @@ async function createUser() {
   const weight = parseFloat(document.getElementById('m-weight').value)
   const notes  = document.getElementById('m-notes').value.trim()
 
-  if (!name)          { alert('이름을 입력하세요.'); return }
+  if (!name)              { alert('이름을 입력하세요.'); return }
   if (!height || !weight) { alert('키와 몸무게를 입력하세요.'); return }
 
-  const res = await fetch('/users', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, height_cm: height, weight_kg: weight, notes }),
-  })
-  const created = await res.json()
-  closeUserModal()
+  const addBtn = document.querySelector('#userModal button:last-child')
+  addBtn.textContent = '저장 중...'
+  addBtn.disabled = true
 
-  // 새 유저로 전환
-  selectedUserId = created.id
-  localStorage.setItem('fitco_user_id', selectedUserId)
-  await loadUsers()
-  document.getElementById('userSelect').value = selectedUserId
-  await loadProfile()
+  try {
+    const res = await fetch('/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, height_cm: height, weight_kg: weight, notes }),
+    })
+    if (!res.ok) throw new Error(`서버 오류 (${res.status})`)
+    const created = await res.json()
+
+    closeUserModal()
+    selectedUserId = created.id
+    localStorage.setItem('fitco_user_id', selectedUserId)
+    await loadUsers()
+    await loadProfile()
+  } catch (e) {
+    alert('저장 실패: ' + e.message)
+  } finally {
+    addBtn.textContent = '추가'
+    addBtn.disabled = false
+  }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -439,14 +449,16 @@ async function init() {
 
 async function loadProfile() {
   if (!selectedUserId) return
-  const profile = await fetch(`/profile?user_id=${selectedUserId}`).then(r => r.json())
-  const body = profile.body
+  const res = await fetch(`/profile?user_id=${selectedUserId}`)
+  if (!res.ok) { console.error('profile load failed', res.status); return }
+  const profile = await res.json()
+  const body = profile.body || {}
 
   document.getElementById('bodyInfo').innerHTML = `
     <p><strong>${body.height_cm}cm / ${body.weight_kg}kg</strong></p>
     ${body.notes ? `<p class="text-amber-700 text-xs mt-1">${body.notes}</p>` : ''}`
 
-  renderEntries(profile.calibration)
+  renderEntries(profile.calibration || [])
 }
 
 function renderEntries(calibration) {
