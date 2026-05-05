@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fitco — 모델 피팅 테스터</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; }
+    .card-text { white-space: pre-wrap; font-size: 0.875rem; line-height: 1.6; }
+    .streaming::after { content: '▊'; animation: blink .7s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 9999px; }
+    .tab-btn { transition: all .15s; }
+    .tab-btn.active { background: #111827; color: white; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- Header -->
+<header class="bg-white border-b border-gray-200 px-6 py-3.5">
+  <div class="max-w-7xl mx-auto flex items-center gap-6">
+    <div>
+      <h1 class="text-base font-semibold text-gray-900">Fitco</h1>
+    </div>
+    <!-- Tabs -->
+    <div class="flex gap-1 bg-gray-100 rounded-lg p-1">
+      <button class="tab-btn active text-xs font-medium px-4 py-1.5 rounded-md" onclick="switchTab('compare', this)">피팅 비교</button>
+      <button class="tab-btn text-xs font-medium px-4 py-1.5 rounded-md text-gray-500 hover:text-gray-700" onclick="switchTab('history', this)">착용 이력</button>
+    </div>
+    <div class="ml-auto text-xs text-gray-400" id="profileSummary"></div>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-6 py-6">
+
+  <!-- ════════════════════════════════════════════════
+       TAB 1: 피팅 비교
+  ════════════════════════════════════════════════ -->
+  <div id="tab-compare" class="space-y-5">
+
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div class="grid grid-cols-4 gap-5 items-start">
+
+        <!-- Col 1: API Keys + Models -->
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Anthropic Key</label>
+            <input id="anthropicKey" type="password" placeholder="sk-ant-..." autocomplete="off"
+              onchange="saveKeys()"
+              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">OpenAI Key</label>
+            <input id="openaiKey" type="password" placeholder="sk-..." autocomplete="off"
+              onchange="saveKeys()"
+              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-2">모델 선택</label>
+            <div id="modelList" class="space-y-1.5"></div>
+          </div>
+        </div>
+
+        <!-- Col 2-3: Product Info -->
+        <div class="col-span-2 space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">카테고리</label>
+              <select id="category" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option>상의</option><option>하의</option><option>아우터</option>
+                <option>원피스</option><option>스커트</option><option>기타</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">고려 사이즈</label>
+              <input id="sizes" type="text" placeholder="S, M 중 고민" value="S, M 중 고민"
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">제품명 / URL</label>
+            <div class="flex gap-2">
+              <input id="productName" type="text" placeholder="무신사 URL 붙여넣기 or 제품명"
+                oninput="onUrlInput(this.value)"
+                class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <button id="fetchBtn" onclick="fetchSizes()" class="hidden shrink-0 text-xs bg-indigo-600 text-white px-3 py-2 rounded-lg hover:bg-indigo-700 transition-colors">
+                실측 가져오기
+              </button>
+            </div>
+            <p id="fetchStatus" class="text-xs text-gray-400 mt-1 hidden"></p>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">추가 정보 <span class="font-normal text-gray-400">(소재, 핏, 브랜드 특성 등)</span></label>
+            <input id="extraInfo" type="text" placeholder="오버핏, 면 100%, 어깨 드롭, 유니클로 여성"
+              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- Col 4: Measurements (collapsible) -->
+        <div>
+          <button onclick="toggleMeasure()" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 mb-2 w-full">
+            <span id="measureToggleIcon">▶</span>
+            <span>실측 입력 <span class="text-gray-300">(선택)</span></span>
+          </button>
+          <div id="measureSection" class="hidden">
+            <div class="grid grid-cols-2 gap-x-3 gap-y-2" id="measurementInputs"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-5 flex items-center justify-between">
+        <button onclick="togglePromptPanel()"
+          class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors">
+          <span id="promptPanelIcon">▶</span>
+          <span>프롬프트 보기 / 수정</span>
+          <span id="promptModifiedBadge" class="hidden badge bg-amber-100 text-amber-700">수정됨</span>
+        </button>
+        <button id="runBtn" onclick="runCompare()"
+          class="bg-gray-900 text-white text-sm font-medium px-6 py-2.5 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          비교 실행
+        </button>
+      </div>
+    </div>
+
+    <!-- Prompt Panel -->
+    <div id="promptPanel" class="hidden bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 bg-amber-50 border-b border-amber-200">
+        <div class="flex items-center gap-3">
+          <span class="text-sm font-semibold text-amber-900">프롬프트 편집</span>
+          <span id="promptModifiedBadge2" class="hidden badge bg-amber-200 text-amber-800">수정됨 — 비교 실행 시 이 내용 사용</span>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="loadPromptPreview()" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">↺ 자동생성으로 초기화</button>
+          <button onclick="loadPromptPreview(true)" class="text-xs bg-indigo-600 text-white px-3 py-1 rounded-md hover:bg-indigo-700">현재 입력값으로 갱신</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 divide-x divide-gray-100">
+        <div class="p-4">
+          <label class="block text-xs font-semibold text-gray-500 mb-2">System Prompt</label>
+          <textarea id="systemPromptEdit" rows="12" oninput="markPromptModified()"
+            class="w-full text-xs font-mono border border-gray-200 rounded-lg p-3 focus:outline-none focus:ring-1 focus:ring-amber-400 resize-y leading-relaxed"></textarea>
+        </div>
+        <div class="p-4">
+          <label class="block text-xs font-semibold text-gray-500 mb-2">User Prompt</label>
+          <textarea id="userPromptEdit" rows="12" oninput="markPromptModified()"
+            class="w-full text-xs font-mono border border-gray-200 rounded-lg p-3 focus:outline-none focus:ring-1 focus:ring-amber-400 resize-y leading-relaxed"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="hidden">
+      <div id="resultGrid" class="grid gap-4"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════
+       TAB 2: 착용 이력
+  ════════════════════════════════════════════════ -->
+  <div id="tab-history" class="hidden space-y-5">
+
+    <!-- Body Info -->
+    <div class="bg-amber-50 border border-amber-200 rounded-xl p-5">
+      <p class="text-xs font-semibold text-amber-800 mb-1">신체 정보</p>
+      <div id="bodyInfo" class="text-sm text-amber-900"></div>
+    </div>
+
+    <!-- Add New Entry -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <p class="text-sm font-semibold text-gray-800 mb-4">새 착용 기록 추가</p>
+
+      <!-- URL / 제품명 -->
+      <div class="mb-3">
+        <label class="block text-xs text-gray-500 mb-1">제품명 or URL</label>
+        <div class="relative">
+          <input id="h-product" type="text" placeholder="유니클로·무신사 URL 붙이면 사이즈 자동 로드"
+            oninput="onHistoryUrlInput(this.value)"
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-20 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <span id="h-fetchSpinner" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-500">로딩…</span>
+        </div>
+        <p id="h-fetchStatus" class="text-xs mt-1 hidden"></p>
+      </div>
+
+      <!-- 사이즈 칩 (URL 로드 후 표시) -->
+      <div id="h-sizePanel" class="hidden mb-3">
+        <label class="block text-xs text-gray-500 mb-2">착용한 사이즈 선택</label>
+        <div id="h-sizeChips" class="flex flex-wrap gap-2"></div>
+      </div>
+
+      <!-- 카테고리 + 직접 입력 사이즈 (URL 없을 때) -->
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">카테고리</label>
+          <select id="h-category" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option>상의</option><option>하의</option><option>아우터</option>
+            <option>원피스</option><option>스커트</option><option>기타</option>
+          </select>
+        </div>
+        <div id="h-manualSizeWrap">
+          <label class="block text-xs text-gray-500 mb-1">착용 사이즈</label>
+          <input id="h-size" type="text" placeholder="S / M / L"
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </div>
+
+      <!-- 총평 -->
+      <div class="mb-4">
+        <label class="block text-xs text-gray-500 mb-1">총평</label>
+        <textarea id="h-fit" rows="3" placeholder="예: 전체적으로 딱맞음. 가슴이 타이트하지만 불편하지 않음. 총장이 조금 짧음."
+          class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+      </div>
+
+      <div class="flex justify-end">
+        <button onclick="addEntry()"
+          class="bg-gray-900 text-white text-sm font-medium px-5 py-2 rounded-lg hover:bg-gray-700 transition-colors">
+          저장
+        </button>
+      </div>
+    </div>
+
+    <!-- Existing Entries -->
+    <div>
+      <p class="text-xs font-semibold text-gray-500 mb-3" id="entryCount"></p>
+      <div id="entryList" class="space-y-2"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const MEASURE_KEYS = {
+  "상의":   ["총장","어깨","가슴","소매"],
+  "하의":   ["총장","허리","엉덩이","밑위","밑단"],
+  "아우터": ["총장","어깨","가슴","소매"],
+  "원피스": ["총장","어깨","가슴","허리","엉덩이"],
+  "스커트": ["총장","허리","엉덩이"],
+  "기타":   ["총장","어깨","가슴","허리"],
+}
+
+const CAT_COLORS = {
+  "상의":   "bg-blue-100 text-blue-700",
+  "하의":   "bg-indigo-100 text-indigo-700",
+  "아우터": "bg-gray-100 text-gray-700",
+  "원피스": "bg-pink-100 text-pink-700",
+  "스커트": "bg-rose-100 text-rose-700",
+  "기타":   "bg-gray-100 text-gray-600",
+}
+
+let selectedModels = []
+
+function saveKeys() {
+  localStorage.setItem('fitco_anthropic_key', document.getElementById('anthropicKey').value)
+  localStorage.setItem('fitco_openai_key',    document.getElementById('openaiKey').value)
+}
+
+function loadKeys() {
+  const ak = localStorage.getItem('fitco_anthropic_key')
+  const ok = localStorage.getItem('fitco_openai_key')
+  if (ak) document.getElementById('anthropicKey').value = ak
+  if (ok) document.getElementById('openaiKey').value    = ok
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+async function init() {
+  // Models
+  loadKeys()
+  const models = await fetch('/models').then(r => r.json())
+  const list = document.getElementById('modelList')
+
+  // 구분선: Anthropic / OpenAI
+  const anthropicModels = models.filter(m => m.provider === 'anthropic')
+  const openaiModels    = models.filter(m => m.provider === 'openai')
+
+  const renderGroup = (label, color, items, defaultCheckedCount) => {
+    list.innerHTML += `<p class="text-xs font-semibold ${color} mt-1">${label}</p>`
+    items.forEach((m, i) => {
+      const checked = i < defaultCheckedCount
+      if (checked) selectedModels.push(m.id)
+      list.innerHTML += `
+        <label class="flex items-center gap-2 cursor-pointer ml-0.5">
+          <input type="checkbox" value="${m.id}" ${checked ? 'checked' : ''}
+            onchange="toggleModel(this)"
+            class="w-4 h-4 rounded border-gray-300">
+          <span class="text-sm text-gray-700">${m.label}</span>
+        </label>`
+    })
+  }
+  renderGroup('Anthropic', 'text-purple-600', anthropicModels, 1)   // Sonnet만 기본 체크
+  renderGroup('OpenAI',    'text-green-600',  openaiModels,    1)    // GPT-4o만 기본 체크
+
+  // Profile
+  await loadProfile()
+
+  // Measure inputs
+  updateMeasureInputs()
+  document.getElementById('category').addEventListener('change', updateMeasureInputs)
+}
+
+async function loadProfile() {
+  const profile = await fetch('/profile').then(r => r.json())
+  const body = profile.body
+
+  document.getElementById('profileSummary').textContent =
+    `${body.height_cm}cm / ${body.weight_kg}kg · 착용 이력 ${profile.calibration.length}건`
+
+  document.getElementById('bodyInfo').innerHTML = `
+    <p><strong>${body.height_cm}cm / ${body.weight_kg}kg</strong></p>
+    <p class="text-amber-700 text-xs mt-1">${body.notes}</p>`
+
+  renderEntries(profile.calibration)
+}
+
+function renderEntries(calibration) {
+  document.getElementById('entryCount').textContent = `착용 이력 ${calibration.length}건`
+  document.getElementById('entryList').innerHTML = calibration.map((c, i) => {
+    const sizeData = c.size_data || {}
+    const wornMeas = sizeData[c.worn_size]
+    const measStr = wornMeas
+      ? Object.entries(wornMeas).map(([k, v]) => `${k} ${v}`).join(' · ')
+      : ''
+    const productLabel = c.product || (c.url ? `<a href="${c.url}" target="_blank" class="hover:underline">${c.url.replace(/https?:\/\//, '').slice(0, 50)}…</a>` : '')
+    return `
+    <div class="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-3">
+      <div class="flex-shrink-0 flex flex-col items-center gap-1">
+        <span class="badge ${CAT_COLORS[c.category] || 'bg-gray-100 text-gray-600'}">${c.category}</span>
+        <span class="text-sm font-bold text-gray-800">${c.worn_size}</span>
+      </div>
+      <div class="flex-1 min-w-0">
+        ${productLabel ? `<p class="text-xs text-gray-400 mb-0.5">${productLabel}</p>` : ''}
+        <p class="text-sm text-gray-700 leading-relaxed">${c.fit}</p>
+        ${measStr ? `<p class="text-xs text-indigo-500 mt-1">${c.worn_size} 실측: ${measStr}</p>` : ''}
+      </div>
+      <button onclick="deleteEntry(${i})" class="flex-shrink-0 text-gray-300 hover:text-red-400 transition-colors text-lg leading-none">×</button>
+    </div>`
+  }).join('')
+}
+
+// ── Tab Switch ─────────────────────────────────────────────────────────────
+
+function switchTab(name, btn) {
+  document.getElementById('tab-compare').classList.add('hidden')
+  document.getElementById('tab-history').classList.add('hidden')
+  document.getElementById('tab-' + name).classList.remove('hidden')
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active', 'text-gray-500'))
+  btn.classList.add('active')
+}
+
+// ── History Tab ────────────────────────────────────────────────────────────
+
+async function addEntry() {
+  const category = document.getElementById('h-category').value
+  const fit = document.getElementById('h-fit').value.trim()
+  const productInput = document.getElementById('h-product').value.trim()
+  const isUrl = isShopUrl(productInput)
+
+  // 사이즈: 칩 선택 또는 직접 입력
+  const worn_size = historySelectedSize || document.getElementById('h-size').value.trim()
+
+  if (!worn_size) { alert('착용 사이즈를 선택하거나 입력하세요.'); return }
+  if (!fit) { alert('총평을 입력하세요.'); return }
+
+  const payload = {
+    category,
+    worn_size,
+    fit,
+    product_name: isUrl ? '' : productInput,
+    url: isUrl ? productInput : '',
+    size_data: historyFetchedSizeData || {},
+  }
+
+  await fetch('/profile/wearing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  // 폼 초기화
+  document.getElementById('h-size').value = ''
+  document.getElementById('h-fit').value = ''
+  document.getElementById('h-product').value = ''
+  resetHistorySizePanel()
+
+  await loadProfile()
+}
+
+async function deleteEntry(index) {
+  if (!confirm('이 기록을 삭제할까요?')) return
+  await fetch(`/profile/wearing/${index}`, { method: 'DELETE' })
+  await loadProfile()
+}
+
+// ── Compare Tab ────────────────────────────────────────────────────────────
+
+function updateMeasureInputs() {
+  const cat = document.getElementById('category').value
+  const keys = MEASURE_KEYS[cat] || MEASURE_KEYS["기타"]
+  document.getElementById('measurementInputs').innerHTML = keys.map(k => `
+    <div>
+      <label class="block text-xs text-gray-500 mb-0.5">${k}</label>
+      <input type="text" data-key="${k}" placeholder="-"
+        class="w-full text-sm border border-gray-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400">
+    </div>`).join('')
+}
+
+function toggleModel(el) {
+  if (el.checked) selectedModels.push(el.value)
+  else selectedModels = selectedModels.filter(m => m !== el.value)
+}
+
+// ── Prompt Panel ───────────────────────────────────────────────────────────
+
+let promptModified = false
+
+function togglePromptPanel() {
+  const panel = document.getElementById('promptPanel')
+  const icon  = document.getElementById('promptPanelIcon')
+  const isHidden = panel.classList.toggle('hidden')
+  icon.textContent = isHidden ? '▶' : '▼'
+  if (!isHidden && !document.getElementById('systemPromptEdit').value) {
+    loadPromptPreview(true)
+  }
+}
+
+async function loadPromptPreview(fromCurrentInput = false) {
+  const res = await fetch('/preview-prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      category:        document.getElementById('category').value,
+      product_name:    document.getElementById('productName').value || '(제품명 미입력)',
+      candidate_sizes: document.getElementById('sizes').value,
+      measurements:    getMeasurements(),
+      extra_info:      document.getElementById('extraInfo').value,
+    }),
+  })
+  const { system, user } = await res.json()
+  document.getElementById('systemPromptEdit').value = system
+  document.getElementById('userPromptEdit').value   = user
+  promptModified = false
+  document.getElementById('promptModifiedBadge').classList.add('hidden')
+  document.getElementById('promptModifiedBadge2').classList.add('hidden')
+}
+
+function markPromptModified() {
+  if (!promptModified) {
+    promptModified = true
+    document.getElementById('promptModifiedBadge').classList.remove('hidden')
+    document.getElementById('promptModifiedBadge2').classList.remove('hidden')
+  }
+}
+
+function isShopUrl(val) {
+  return val.includes('musinsa.com') || val.includes('uniqlo.com')
+}
+
+function onUrlInput(val) {
+  const btn = document.getElementById('fetchBtn')
+  if (isShopUrl(val)) btn.classList.remove('hidden')
+  else btn.classList.add('hidden')
+}
+
+// ── History Tab URL 감지 & 자동 사이즈 로드 ──────────────────────────────
+
+let historyFetchedSizeData = null
+let historySelectedSize = null
+let historyUrlDebounce = null
+
+function onHistoryUrlInput(val) {
+  clearTimeout(historyUrlDebounce)
+  resetHistorySizePanel()
+
+  if (!isShopUrl(val)) return
+
+  // 500ms 디바운스 후 자동 로드
+  historyUrlDebounce = setTimeout(() => fetchHistorySizes(), 500)
+}
+
+function resetHistorySizePanel() {
+  historyFetchedSizeData = null
+  historySelectedSize = null
+  document.getElementById('h-sizePanel').classList.add('hidden')
+  document.getElementById('h-sizeChips').innerHTML = ''
+  document.getElementById('h-manualSizeWrap').classList.remove('hidden')
+  document.getElementById('h-fetchStatus').classList.add('hidden')
+  document.getElementById('h-fetchSpinner').classList.add('hidden')
+}
+
+async function fetchHistorySizes() {
+  const url = document.getElementById('h-product').value.trim()
+  const status = document.getElementById('h-fetchStatus')
+  const spinner = document.getElementById('h-fetchSpinner')
+
+  spinner.classList.remove('hidden')
+  status.classList.add('hidden')
+
+  try {
+    const res = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
+    const data = await res.json()
+
+    if (data.error) {
+      status.textContent = '⚠️ ' + data.error
+      status.className = 'text-xs text-red-400 mt-1'
+      status.classList.remove('hidden')
+      return
+    }
+
+    historyFetchedSizeData = data.sizes
+    renderSizeChips(Object.keys(data.sizes))
+
+    status.textContent = `✓ ${data.type} — ${Object.keys(data.sizes).join(', ')}`
+    status.className = 'text-xs text-indigo-500 mt-1'
+    status.classList.remove('hidden')
+  } catch (e) {
+    status.textContent = '오류: ' + e.message
+    status.className = 'text-xs text-red-400 mt-1'
+    status.classList.remove('hidden')
+  } finally {
+    spinner.classList.add('hidden')
+  }
+}
+
+function renderSizeChips(sizeNames) {
+  const panel = document.getElementById('h-sizePanel')
+  const chips = document.getElementById('h-sizeChips')
+  const manualWrap = document.getElementById('h-manualSizeWrap')
+
+  chips.innerHTML = sizeNames.map(name => `
+    <button type="button" onclick="selectHistorySize('${name}')"
+      id="hchip-${name}"
+      class="size-chip px-4 py-1.5 text-sm font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all">
+      ${name}
+    </button>`).join('')
+
+  panel.classList.remove('hidden')
+  manualWrap.classList.add('hidden')
+  document.getElementById('h-size').value = ''
+  historySelectedSize = null
+}
+
+function selectHistorySize(name) {
+  historySelectedSize = name
+  document.querySelectorAll('.size-chip').forEach(el => {
+    const isSelected = el.id === `hchip-${name}`
+    el.className = isSelected
+      ? 'size-chip px-4 py-1.5 text-sm font-medium rounded-full border-2 border-indigo-600 bg-indigo-50 text-indigo-700 transition-all'
+      : 'size-chip px-4 py-1.5 text-sm font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all'
+  })
+}
+
+async function fetchSizes() {
+  const url = document.getElementById('productName').value.trim()
+  const status = document.getElementById('fetchStatus')
+  const btn = document.getElementById('fetchBtn')
+
+  btn.textContent = '가져오는 중...'
+  btn.disabled = true
+  status.textContent = ''
+  status.classList.remove('hidden')
+
+  try {
+    const res = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
+    const data = await res.json()
+
+    if (data.error) {
+      status.textContent = '⚠️ ' + data.error
+      return
+    }
+
+    // 사이즈 목록 파싱해서 고려 사이즈 자동 제안
+    const sizeNames = Object.keys(data.sizes)
+    document.getElementById('sizes').value = sizeNames.slice(0, 2).join(', ') + ' 중 고민'
+
+    // 실측 섹션 열기
+    const sec = document.getElementById('measureSection')
+    const icon = document.getElementById('measureToggleIcon')
+    if (sec.classList.contains('hidden')) {
+      sec.classList.remove('hidden')
+      icon.textContent = '▼'
+      updateMeasureInputs()
+    }
+
+    // 첫 번째 사이즈(보통 S or M)의 실측으로 입력란 채우기
+    const firstSize = data.sizes[sizeNames[0]] || {}
+    document.querySelectorAll('#measurementInputs input').forEach(el => {
+      const key = el.dataset.key
+      // 무신사/유니클로 측정항목 이름 매핑
+      const aliases = {
+        '총장':  ['총장', '전체 길이'],
+        '어깨':  ['어깨너비', '어깨', '어깨너비(솔기에서 솔기까지)'],
+        '가슴':  ['가슴단면', '가슴', '가슴너비'],
+        '소매':  ['소매길이', '소매', '등 중심부터 소매까지 길이'],
+        '허리':  ['허리단면', '허리', '허리너비'],
+        '엉덩이':['힙단면', '엉덩이', '힙너비'],
+        '밑위':  ['밑위', '밑위길이'],
+        '밑단':  ['밑단너비', '밑단'],
+      }
+      const lookups = aliases[key] || [key]
+      for (const k of lookups) {
+        if (firstSize[k]) { el.value = firstSize[k]; break }
+      }
+    })
+
+    status.textContent = `✓ ${data.type} 실측 로드 (${sizeNames[0]} 기준) — 사이즈: ${sizeNames.join(', ')}`
+    status.classList.replace('text-gray-400', 'text-indigo-600')
+
+  } catch (e) {
+    status.textContent = '오류: ' + e.message
+  } finally {
+    btn.textContent = '실측 가져오기'
+    btn.disabled = false
+  }
+}
+
+function toggleMeasure() {
+  const sec = document.getElementById('measureSection')
+  const icon = document.getElementById('measureToggleIcon')
+  const hidden = sec.classList.toggle('hidden')
+  icon.textContent = hidden ? '▶' : '▼'
+  if (!hidden) updateMeasureInputs()
+}
+
+function getMeasurements() {
+  const result = {}
+  document.querySelectorAll('#measurementInputs input').forEach(el => {
+    if (el.value.trim()) result[el.dataset.key] = el.value.trim()
+  })
+  return result
+}
+
+async function runCompare() {
+  const anthropicKey = document.getElementById('anthropicKey').value.trim()
+  const openaiKey    = document.getElementById('openaiKey').value.trim()
+  const needsAnthropic = selectedModels.some(m => ['claude-opus-4-7','claude-sonnet-4-6','claude-haiku-4-5-20251001'].includes(m))
+  const needsOpenAI    = selectedModels.some(m => ['gpt-4o','gpt-4o-mini'].includes(m))
+  if (needsAnthropic && !anthropicKey) { alert('Anthropic API Key를 입력하세요.'); return }
+  if (needsOpenAI    && !openaiKey)    { alert('OpenAI API Key를 입력하세요.');    return }
+  if (!selectedModels.length) { alert('모델을 하나 이상 선택하세요.'); return }
+  if (!document.getElementById('productName').value.trim()) { alert('제품명을 입력하세요.'); return }
+
+  const btn = document.getElementById('runBtn')
+  btn.disabled = true
+  btn.textContent = '실행 중...'
+
+  const grid = document.getElementById('resultGrid')
+  grid.style.gridTemplateColumns = `repeat(${selectedModels.length}, 1fr)`
+  grid.innerHTML = selectedModels.map(m => modelCard(m)).join('')
+  document.getElementById('results').classList.remove('hidden')
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' })
+
+  selectedModels.forEach(m => {
+    document.getElementById(`text-${m}`).classList.add('streaming')
+    document.getElementById(`status-${m}`).textContent = '생성 중...'
+  })
+
+  const body = {
+    anthropic_key:   document.getElementById('anthropicKey').value.trim(),
+    openai_key:      document.getElementById('openaiKey').value.trim(),
+    models:          selectedModels,
+    category:        document.getElementById('category').value,
+    product_name:    document.getElementById('productName').value,
+    candidate_sizes: document.getElementById('sizes').value,
+    measurements:    getMeasurements(),
+    extra_info:      document.getElementById('extraInfo').value,
+    custom_system:   promptModified ? document.getElementById('systemPromptEdit').value : '',
+    custom_user:     promptModified ? document.getElementById('userPromptEdit').value   : '',
+  }
+
+  try {
+    const response = await fetch('/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop()
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        handleEvent(JSON.parse(line.slice(6)))
+      }
+    }
+  } catch (e) {
+    alert('오류: ' + e.message)
+  }
+
+  btn.disabled = false
+  btn.textContent = '비교 실행'
+}
+
+function handleEvent(event) {
+  if (event.type === 'all_done' || !event.model) return
+  const m = event.model
+
+  if (event.type === 'token') {
+    document.getElementById(`text-${m}`).textContent += event.text
+  }
+  if (event.type === 'done') {
+    document.getElementById(`text-${m}`).classList.remove('streaming')
+    document.getElementById(`status-${m}`).textContent = '완료'
+    document.getElementById(`stats-${m}`).innerHTML = `
+      <span class="badge bg-blue-100 text-blue-700">${event.latency_sec}s</span>
+      <span class="badge bg-gray-100 text-gray-600">${event.output_tokens} tok</span>
+      <span class="badge bg-green-100 text-green-700">$${event.cost_usd.toFixed(5)}</span>`
+  }
+  if (event.type === 'error') {
+    const el = document.getElementById(`text-${m}`)
+    el.classList.remove('streaming')
+    el.textContent = '⚠️ ' + event.text
+    el.classList.add('text-red-500')
+    document.getElementById(`status-${m}`).textContent = '오류'
+  }
+}
+
+function modelCard(modelId) {
+  const labels = {
+    'claude-opus-4-7':           'Opus 4.7',
+    'claude-sonnet-4-6':         'Sonnet 4.6',
+    'claude-haiku-4-5-20251001': 'Haiku 4.5',
+    'gpt-4o':                    'GPT-4o',
+    'gpt-4o-mini':               'GPT-4o mini',
+  }
+  const colors = {
+    'claude-opus-4-7':           'border-purple-200',
+    'claude-sonnet-4-6':         'border-blue-200',
+    'claude-haiku-4-5-20251001': 'border-sky-200',
+    'gpt-4o':                    'border-emerald-200',
+    'gpt-4o-mini':               'border-teal-200',
+  }
+  const headerColors = {
+    'claude-opus-4-7':           'text-purple-800 bg-purple-50',
+    'claude-sonnet-4-6':         'text-blue-800 bg-blue-50',
+    'claude-haiku-4-5-20251001': 'text-sky-800 bg-sky-50',
+    'gpt-4o':                    'text-emerald-800 bg-emerald-50',
+    'gpt-4o-mini':               'text-teal-800 bg-teal-50',
+  }
+  return `
+    <div class="rounded-xl border ${colors[modelId] || 'border-gray-200'} overflow-hidden shadow-sm bg-white">
+      <div class="px-4 py-3 flex items-center justify-between ${headerColors[modelId] || 'bg-gray-50 text-gray-700'}">
+        <span class="font-semibold text-sm">${labels[modelId] || modelId}</span>
+        <span id="status-${modelId}" class="text-xs opacity-60">대기중</span>
+      </div>
+      <div class="p-4 min-h-[280px]">
+        <div id="text-${modelId}" class="card-text text-gray-800"></div>
+      </div>
+      <div class="px-4 py-2.5 bg-gray-50 border-t border-gray-100 flex gap-2 flex-wrap" id="stats-${modelId}">
+        <span class="badge bg-gray-100 text-gray-400">—</span>
+      </div>
+    </div>`
+}
+
+init()
+</script>
+</body>
+</html>
