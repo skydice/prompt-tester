@@ -86,6 +86,7 @@ class PreviewRequest(BaseModel):
     product_name: str
     candidate_sizes: str
     measurements: dict = {}
+    size_chart: dict = {}
     extra_info: str = ""
 
 
@@ -98,6 +99,7 @@ class CompareRequest(BaseModel):
     product_name: str
     candidate_sizes: str
     measurements: dict = {}
+    size_chart: dict = {}
     extra_info: str = ""
     custom_system: str = ""
     custom_user: str = ""
@@ -203,6 +205,7 @@ def preview_prompt(req: PreviewRequest):
         product_name    = req.product_name,
         candidate_sizes = req.candidate_sizes,
         measurements    = req.measurements or None,
+        size_chart      = req.size_chart or None,
         extra_info      = req.extra_info,
         profile         = profile,
     )
@@ -284,6 +287,7 @@ async def compare(req: CompareRequest):
             product_name    = req.product_name,
             candidate_sizes = req.candidate_sizes,
             measurements    = req.measurements or None,
+            size_chart      = req.size_chart or None,
             extra_info      = req.extra_info,
             profile         = profile or None,
         )

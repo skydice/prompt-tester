@@ -567,6 +567,7 @@ async function loadPromptPreview() {
       product_name:    document.getElementById('productName').value || '(제품명 미입력)',
       candidate_sizes: document.getElementById('sizes').value,
       measurements:    getMeasurements(),
+      size_chart:      fetchedSizeChart || {},
       extra_info:      document.getElementById('extraInfo').value,
     }),
   })
@@ -588,6 +589,8 @@ function markPromptModified() {
 
 // ── Compare URL & Sizes ────────────────────────────────────────────────────
 
+let fetchedSizeChart = null   // 전체 사이즈 차트 {size: {항목: 값}}
+
 function isShopUrl(val) {
   return val.includes('musinsa.com') || val.includes('uniqlo.com')
 }
@@ -595,7 +598,7 @@ function isShopUrl(val) {
 function onUrlInput(val) {
   const btn = document.getElementById('fetchBtn')
   if (isShopUrl(val)) btn.classList.remove('hidden')
-  else btn.classList.add('hidden')
+  else { btn.classList.add('hidden'); fetchedSizeChart = null }
 }
 
 async function fetchSizes() {
@@ -607,6 +610,7 @@ async function fetchSizes() {
   btn.disabled = true
   status.textContent = ''
   status.classList.remove('hidden')
+  fetchedSizeChart = null
 
   try {
     const res  = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
@@ -614,9 +618,12 @@ async function fetchSizes() {
 
     if (data.error) { status.textContent = '⚠️ ' + data.error; return }
 
-    const sizeNames = Object.keys(data.sizes)
-    document.getElementById('sizes').value = sizeNames.slice(0, 2).join(', ') + ' 중 고민'
+    // 전체 사이즈 차트 저장 — LLM에 통째로 전달
+    fetchedSizeChart = data.sizes
+    const sizeNames  = Object.keys(data.sizes)
+    document.getElementById('sizes').value = sizeNames.join(', ') + ' 중 고민'
 
+    // 실측 입력란: 첫 번째 사이즈 기준으로 채워두기 (참고용)
     const sec  = document.getElementById('measureSection')
     const icon = document.getElementById('measureToggleIcon')
     if (sec.classList.contains('hidden')) {
@@ -624,8 +631,6 @@ async function fetchSizes() {
       icon.textContent = '▼'
       updateMeasureInputs()
     }
-
-    const firstSize = data.sizes[sizeNames[0]] || {}
     const aliases = {
       '총장':   ['총장', '전체 길이'],
       '어깨':   ['어깨너비', '어깨', '어깨너비(솔기에서 솔기까지)'],
@@ -636,13 +641,15 @@ async function fetchSizes() {
       '밑위':   ['밑위', '밑위길이'],
       '밑단':   ['밑단너비', '밑단'],
     }
+    const firstSize = data.sizes[sizeNames[0]] || {}
     document.querySelectorAll('#measurementInputs input').forEach(el => {
       const lookups = aliases[el.dataset.key] || [el.dataset.key]
       for (const k of lookups) { if (firstSize[k]) { el.value = firstSize[k]; break } }
     })
 
-    status.textContent = `✓ ${data.type} 실측 로드 (${sizeNames[0]} 기준) — ${sizeNames.join(', ')}`
-    status.classList.replace('text-gray-400', 'text-indigo-600')
+    status.textContent = `✓ ${data.type} 전체 사이즈 차트 로드 — ${sizeNames.join(', ')}`
+    status.className = 'text-xs text-indigo-600 mt-1'
+    status.classList.remove('hidden')
   } catch (e) {
     status.textContent = '오류: ' + e.message
   } finally {
@@ -784,6 +791,7 @@ async function runCompare() {
     product_name:    document.getElementById('productName').value,
     candidate_sizes: document.getElementById('sizes').value,
     measurements:    getMeasurements(),
+    size_chart:      fetchedSizeChart || {},
     extra_info:      document.getElementById('extraInfo').value,
     custom_system:   promptModified ? document.getElementById('systemPromptEdit').value : '',
     custom_user:     promptModified ? document.getElementById('userPromptEdit').value   : '',

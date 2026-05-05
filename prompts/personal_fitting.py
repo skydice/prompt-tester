@@ -63,7 +63,7 @@ USER_PROMPT_TEMPLATE = """## 내 프로필
 브랜드/제품명: {product_name}
 고려 중인 사이즈: {candidate_sizes}
 
-제품 실측 (있으면):
+제품 실측:
 {measurements}
 
 추가 정보:
@@ -80,11 +80,34 @@ USER_PROMPT_TEMPLATE = """## 내 프로필
 **근거**: (내 이력 중 어떤 착용 경험을 참고했는지)"""
 
 
+def _format_size_chart(size_chart: dict) -> str:
+    """전체 사이즈 차트를 마크다운 표로 변환."""
+    sizes = list(size_chart.keys())
+    # 모든 측정 항목 수집 (순서 유지)
+    seen: set = set()
+    measurements: list[str] = []
+    for data in size_chart.values():
+        for k in data:
+            if k not in seen:
+                measurements.append(k)
+                seen.add(k)
+
+    header = "| 항목 | " + " | ".join(sizes) + " |"
+    sep    = "|------|" + "|".join("------" for _ in sizes) + "|"
+    rows   = []
+    for m in measurements:
+        row = f"| {m} | " + " | ".join(size_chart[s].get(m, "-") for s in sizes) + " |"
+        rows.append(row)
+
+    return "\n".join([header, sep] + rows)
+
+
 def build_prompt(
     category: str,
     product_name: str,
     candidate_sizes: str,
     measurements: dict | None = None,
+    size_chart: dict | None = None,
     extra_info: str = "",
     profile: dict | None = None,
 ) -> tuple[str, str]:
@@ -92,7 +115,9 @@ def build_prompt(
         profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
     profile_summary = build_profile_summary(profile)
 
-    if measurements:
+    if size_chart:
+        meas_text = _format_size_chart(size_chart)
+    elif measurements:
         meas_text = "\n".join(f"- {k}: {v}" for k, v in measurements.items())
     else:
         meas_text = "(실측 정보 없음 — 추정으로 답변)"
