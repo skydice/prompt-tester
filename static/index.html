@@ -217,41 +217,47 @@
 
     <!-- Add New Entry -->
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <p class="text-sm font-semibold text-gray-800 mb-4">새 착용 기록 추가</p>
 
-      <!-- 1행: 카테고리 + 사이즈 칩 -->
-      <div class="flex items-center gap-3 mb-3 flex-wrap">
-        <select id="h-category" class="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 shrink-0">
-          <option>상의</option><option>하의</option><option>아우터</option>
-          <option>원피스</option><option>스커트</option><option>기타</option>
-        </select>
-        <div class="flex flex-wrap gap-1.5" id="h-sizeChips">
-          <!-- 기본 칩 -->
+      <!-- URL / 제품명 -->
+      <div class="mb-3">
+        <label class="block text-xs text-gray-500 mb-1">제품명 or URL</label>
+        <div class="relative">
+          <input id="h-product" type="text" placeholder="유니클로·무신사 URL 붙이면 사이즈 자동 로드"
+            oninput="onHistoryUrlInput(this.value)"
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-20 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <span id="h-fetchSpinner" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-500">로딩…</span>
         </div>
-        <input id="h-size" type="text" placeholder="직접 입력"
-          oninput="onManualSizeInput(this.value)"
-          class="w-20 text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <p id="h-fetchStatus" class="text-xs mt-1 hidden"></p>
       </div>
 
-      <!-- 2행: 총평 -->
-      <textarea id="h-fit" rows="3"
-        placeholder="어떻게 맞았어? (예: 어깨는 딱맞는데 가슴이 타이트함. 총장 적당. 다음엔 L 도전할 것)"
-        class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+      <!-- 사이즈 칩 (URL 로드 후 표시) -->
+      <div id="h-sizePanel" class="hidden mb-3">
+        <label class="block text-xs text-gray-500 mb-2">착용한 사이즈 선택</label>
+        <div id="h-sizeChips" class="flex flex-wrap gap-2"></div>
+      </div>
 
-      <!-- 3행: 제품명/URL (접힘) -->
-      <div class="mb-3">
-        <button type="button" onclick="toggleProductPanel()"
-          class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
-          <span id="h-productIcon">▶</span> 제품명 / URL 추가 <span class="text-gray-300">(선택)</span>
-        </button>
-        <div id="h-productPanel" class="hidden mt-2">
-          <div class="relative">
-            <input id="h-product" type="text" placeholder="제품명 또는 유니클로·무신사 URL"
-              oninput="onHistoryUrlInput(this.value)"
-              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 pr-16 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <span id="h-fetchSpinner" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-xs text-indigo-500">로딩…</span>
-          </div>
-          <p id="h-fetchStatus" class="text-xs mt-1 hidden"></p>
+      <!-- 카테고리 + 직접 입력 사이즈 (URL 없을 때) -->
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">카테고리</label>
+          <select id="h-category" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option>상의</option><option>하의</option><option>아우터</option>
+            <option>원피스</option><option>스커트</option><option>기타</option>
+          </select>
         </div>
+        <div id="h-manualSizeWrap">
+          <label class="block text-xs text-gray-500 mb-1">착용 사이즈</label>
+          <input id="h-size" type="text" placeholder="S / M / L"
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </div>
+
+      <!-- 총평 -->
+      <div class="mb-4">
+        <label class="block text-xs text-gray-500 mb-1">총평</label>
+        <textarea id="h-fit" rows="3" placeholder="예: 전체적으로 딱맞음. 가슴이 타이트하지만 불편하지 않음. 총장이 조금 짧음."
+          class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
       </div>
 
       <div class="flex justify-end">
@@ -434,7 +440,6 @@ async function init() {
 
   updateMeasureInputs()
   document.getElementById('category').addEventListener('change', updateMeasureInputs)
-  initSizeChips()
 
   // 모달 배경 클릭으로 닫기
   document.getElementById('userModal').addEventListener('click', e => {
@@ -495,11 +500,11 @@ function switchTab(name, btn) {
 // ── History Tab ────────────────────────────────────────────────────────────
 
 async function addEntry() {
-  const category     = document.getElementById('h-category').value
-  const fit          = document.getElementById('h-fit').value.trim()
-  const productInput = (document.getElementById('h-product')?.value || '').trim()
-  const isUrl        = isShopUrl(productInput)
-  const worn_size    = historySelectedSize || document.getElementById('h-size').value.trim()
+  const category    = document.getElementById('h-category').value
+  const fit         = document.getElementById('h-fit').value.trim()
+  const productInput = document.getElementById('h-product').value.trim()
+  const isUrl       = isShopUrl(productInput)
+  const worn_size   = historySelectedSize || document.getElementById('h-size').value.trim()
 
   if (!worn_size) { alert('착용 사이즈를 선택하거나 입력하세요.'); return }
   if (!fit)       { alert('총평을 입력하세요.'); return }
@@ -521,11 +526,9 @@ async function addEntry() {
   document.getElementById('h-size').value    = ''
   document.getElementById('h-fit').value     = ''
   document.getElementById('h-product').value = ''
-  document.getElementById('h-fetchStatus').classList.add('hidden')
-  historyFetchedSizeData = null
-  initSizeChips()  // 칩 초기 상태로 리셋
+  resetHistorySizePanel()
 
-  await loadUsers()
+  await loadUsers()   // 이력 건수 갱신
   await loadProfile()
 }
 
@@ -683,61 +686,27 @@ function getMeasurements() {
   return result
 }
 
-// ── History Tab Size Chips & URL ───────────────────────────────────────────
-
-const DEFAULT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
+// ── History Tab URL & Size Chips ───────────────────────────────────────────
 
 let historyFetchedSizeData = null
 let historySelectedSize    = null
 let historyUrlDebounce     = null
 
-function initSizeChips() {
-  renderSizeChips(DEFAULT_SIZES)
-}
-
-function renderSizeChips(sizeNames) {
-  const chips = document.getElementById('h-sizeChips')
-  chips.innerHTML = sizeNames.map(name => `
-    <button type="button" onclick="selectHistorySize('${name}')" id="hchip-${name}"
-      class="size-chip px-3 py-1 text-xs font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all">
-      ${name}
-    </button>`).join('')
-  historySelectedSize = null
-}
-
-function selectHistorySize(name) {
-  historySelectedSize = name
-  document.getElementById('h-size').value = ''
-  document.querySelectorAll('.size-chip').forEach(el => {
-    el.className = el.id === `hchip-${name}`
-      ? 'size-chip px-3 py-1 text-xs font-medium rounded-full border-2 border-indigo-600 bg-indigo-50 text-indigo-700 transition-all'
-      : 'size-chip px-3 py-1 text-xs font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all'
-  })
-}
-
-function onManualSizeInput(val) {
-  if (val) {
-    historySelectedSize = null
-    document.querySelectorAll('.size-chip').forEach(el => {
-      el.className = 'size-chip px-3 py-1 text-xs font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all'
-    })
-  }
-}
-
-function toggleProductPanel() {
-  const panel = document.getElementById('h-productPanel')
-  const icon  = document.getElementById('h-productIcon')
-  const hidden = panel.classList.toggle('hidden')
-  icon.textContent = hidden ? '▶' : '▼'
-  if (!hidden) document.getElementById('h-product').focus()
-}
-
 function onHistoryUrlInput(val) {
   clearTimeout(historyUrlDebounce)
-  historyFetchedSizeData = null
-  document.getElementById('h-fetchStatus').classList.add('hidden')
+  resetHistorySizePanel()
   if (!isShopUrl(val)) return
   historyUrlDebounce = setTimeout(() => fetchHistorySizes(), 500)
+}
+
+function resetHistorySizePanel() {
+  historyFetchedSizeData = null
+  historySelectedSize    = null
+  document.getElementById('h-sizePanel').classList.add('hidden')
+  document.getElementById('h-sizeChips').innerHTML = ''
+  document.getElementById('h-manualSizeWrap').classList.remove('hidden')
+  document.getElementById('h-fetchStatus').classList.add('hidden')
+  document.getElementById('h-fetchSpinner').classList.add('hidden')
 }
 
 async function fetchHistorySizes() {
@@ -760,10 +729,9 @@ async function fetchHistorySizes() {
     }
 
     historyFetchedSizeData = data.sizes
-    // URL 사이즈 차트로 칩 교체
     renderSizeChips(Object.keys(data.sizes))
 
-    status.textContent = `✓ ${data.type} 실측 연결 — ${Object.keys(data.sizes).join(', ')}`
+    status.textContent = `✓ ${data.type} — ${Object.keys(data.sizes).join(', ')}`
     status.className = 'text-xs text-indigo-500 mt-1'
     status.classList.remove('hidden')
   } catch (e) {
@@ -773,6 +741,31 @@ async function fetchHistorySizes() {
   } finally {
     spinner.classList.add('hidden')
   }
+}
+
+function renderSizeChips(sizeNames) {
+  const chips      = document.getElementById('h-sizeChips')
+  const manualWrap = document.getElementById('h-manualSizeWrap')
+
+  chips.innerHTML = sizeNames.map(name => `
+    <button type="button" onclick="selectHistorySize('${name}')" id="hchip-${name}"
+      class="size-chip px-4 py-1.5 text-sm font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all">
+      ${name}
+    </button>`).join('')
+
+  document.getElementById('h-sizePanel').classList.remove('hidden')
+  manualWrap.classList.add('hidden')
+  document.getElementById('h-size').value = ''
+  historySelectedSize = null
+}
+
+function selectHistorySize(name) {
+  historySelectedSize = name
+  document.querySelectorAll('.size-chip').forEach(el => {
+    el.className = el.id === `hchip-${name}`
+      ? 'size-chip px-4 py-1.5 text-sm font-medium rounded-full border-2 border-indigo-600 bg-indigo-50 text-indigo-700 transition-all'
+      : 'size-chip px-4 py-1.5 text-sm font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all'
+  })
 }
 
 // ── Run Compare ────────────────────────────────────────────────────────────
