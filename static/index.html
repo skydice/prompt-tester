@@ -20,17 +20,66 @@
 <!-- Header -->
 <header class="bg-white border-b border-gray-200 px-6 py-3.5">
   <div class="max-w-7xl mx-auto flex items-center gap-6">
-    <div>
-      <h1 class="text-base font-semibold text-gray-900">Fitco</h1>
-    </div>
+    <h1 class="text-base font-semibold text-gray-900 shrink-0">Fitco</h1>
+
     <!-- Tabs -->
-    <div class="flex gap-1 bg-gray-100 rounded-lg p-1">
+    <div class="flex gap-1 bg-gray-100 rounded-lg p-1 shrink-0">
       <button class="tab-btn active text-xs font-medium px-4 py-1.5 rounded-md" onclick="switchTab('compare', this)">피팅 비교</button>
       <button class="tab-btn text-xs font-medium px-4 py-1.5 rounded-md text-gray-500 hover:text-gray-700" onclick="switchTab('history', this)">착용 이력</button>
     </div>
-    <div class="ml-auto text-xs text-gray-400" id="profileSummary"></div>
+
+    <!-- User selector -->
+    <div class="ml-auto flex items-center gap-2 shrink-0">
+      <span class="text-xs text-gray-400 hidden" id="profileSummary"></span>
+      <select id="userSelect" onchange="switchUser(this.value)"
+        class="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-700 max-w-[160px]">
+      </select>
+      <button onclick="openUserModal()"
+        class="text-xs bg-gray-900 text-white px-2.5 py-1.5 rounded-lg hover:bg-gray-700 transition-colors"
+        title="프로필 추가">+ 추가</button>
+      <button onclick="deleteCurrentUser()"
+        class="text-xs border border-red-200 text-red-400 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
+        title="현재 프로필 삭제">삭제</button>
+    </div>
   </div>
 </header>
+
+<!-- Add User Modal -->
+<div id="userModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4">
+    <h3 class="text-sm font-semibold text-gray-900">새 프로필 추가</h3>
+    <div class="space-y-2.5">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">이름</label>
+        <input id="m-name" type="text" placeholder="홍길동"
+          class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">키 (cm)</label>
+          <input id="m-height" type="number" placeholder="165"
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">몸무게 (kg)</label>
+          <input id="m-weight" type="number" placeholder="55"
+            class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">신체 특이사항 <span class="font-normal text-gray-400">(선택)</span></label>
+        <textarea id="m-notes" rows="2" placeholder="예: 가슴이 체형 대비 큰 편"
+          class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+      </div>
+    </div>
+    <div class="flex gap-2 pt-1">
+      <button onclick="closeUserModal()"
+        class="flex-1 text-sm border border-gray-200 text-gray-600 py-2 rounded-lg hover:bg-gray-50 transition-colors">취소</button>
+      <button onclick="createUser()"
+        class="flex-1 text-sm bg-gray-900 text-white py-2 rounded-lg hover:bg-gray-700 transition-colors">추가</button>
+    </div>
+  </div>
+</div>
 
 <main class="max-w-7xl mx-auto px-6 py-6">
 
@@ -250,6 +299,9 @@ const CAT_COLORS = {
 }
 
 let selectedModels = []
+let selectedUserId = localStorage.getItem('fitco_user_id') || ''
+
+// ── Keys ───────────────────────────────────────────────────────────────────
 
 function saveKeys() {
   localStorage.setItem('fitco_anthropic_key', document.getElementById('anthropicKey').value)
@@ -263,15 +315,95 @@ function loadKeys() {
   if (ok) document.getElementById('openaiKey').value    = ok
 }
 
+// ── User Management ────────────────────────────────────────────────────────
+
+async function loadUsers() {
+  const users = await fetch('/users').then(r => r.json())
+  const sel = document.getElementById('userSelect')
+  sel.innerHTML = users.map(u =>
+    `<option value="${u.id}">${u.name} (${u.height_cm}cm/${u.weight_kg}kg · ${u.entry_count}건)</option>`
+  ).join('')
+
+  // 저장된 유저 복원, 없으면 첫 번째
+  if (users.length > 0) {
+    const valid = users.find(u => u.id === selectedUserId)
+    selectedUserId = valid ? valid.id : users[0].id
+    sel.value = selectedUserId
+    localStorage.setItem('fitco_user_id', selectedUserId)
+  }
+  return users
+}
+
+async function switchUser(userId) {
+  selectedUserId = userId
+  localStorage.setItem('fitco_user_id', userId)
+  promptModified = false
+  document.getElementById('systemPromptEdit').value = ''
+  document.getElementById('userPromptEdit').value = ''
+  await loadProfile()
+}
+
+async function deleteCurrentUser() {
+  const sel = document.getElementById('userSelect')
+  const name = sel.options[sel.selectedIndex]?.text || '이 프로필'
+  if (!confirm(`"${name}"을 삭제할까요? 착용 이력도 모두 사라집니다.`)) return
+
+  await fetch(`/users/${selectedUserId}`, { method: 'DELETE' })
+  const users = await loadUsers()
+  if (users.length > 0) await loadProfile()
+  else {
+    document.getElementById('bodyInfo').innerHTML = '<p class="text-sm text-amber-700">프로필이 없습니다. 추가하세요.</p>'
+    document.getElementById('entryList').innerHTML = ''
+    document.getElementById('entryCount').textContent = ''
+  }
+}
+
+function openUserModal() {
+  document.getElementById('m-name').value   = ''
+  document.getElementById('m-height').value = ''
+  document.getElementById('m-weight').value = ''
+  document.getElementById('m-notes').value  = ''
+  document.getElementById('userModal').classList.remove('hidden')
+  document.getElementById('m-name').focus()
+}
+
+function closeUserModal() {
+  document.getElementById('userModal').classList.add('hidden')
+}
+
+async function createUser() {
+  const name   = document.getElementById('m-name').value.trim()
+  const height = parseFloat(document.getElementById('m-height').value)
+  const weight = parseFloat(document.getElementById('m-weight').value)
+  const notes  = document.getElementById('m-notes').value.trim()
+
+  if (!name)          { alert('이름을 입력하세요.'); return }
+  if (!height || !weight) { alert('키와 몸무게를 입력하세요.'); return }
+
+  const res = await fetch('/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, height_cm: height, weight_kg: weight, notes }),
+  })
+  const created = await res.json()
+  closeUserModal()
+
+  // 새 유저로 전환
+  selectedUserId = created.id
+  localStorage.setItem('fitco_user_id', selectedUserId)
+  await loadUsers()
+  document.getElementById('userSelect').value = selectedUserId
+  await loadProfile()
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 
 async function init() {
-  // Models
   loadKeys()
+
+  // Models
   const models = await fetch('/models').then(r => r.json())
   const list = document.getElementById('modelList')
-
-  // 구분선: Anthropic / OpenAI
   const anthropicModels = models.filter(m => m.provider === 'anthropic')
   const openaiModels    = models.filter(m => m.provider === 'openai')
 
@@ -289,27 +421,30 @@ async function init() {
         </label>`
     })
   }
-  renderGroup('Anthropic', 'text-purple-600', anthropicModels, 1)   // Sonnet만 기본 체크
-  renderGroup('OpenAI',    'text-green-600',  openaiModels,    1)    // GPT-4o만 기본 체크
+  renderGroup('Anthropic', 'text-purple-600', anthropicModels, 1)
+  renderGroup('OpenAI',    'text-green-600',  openaiModels,    1)
 
-  // Profile
+  // Users & Profile
+  await loadUsers()
   await loadProfile()
 
-  // Measure inputs
   updateMeasureInputs()
   document.getElementById('category').addEventListener('change', updateMeasureInputs)
+
+  // 모달 배경 클릭으로 닫기
+  document.getElementById('userModal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeUserModal()
+  })
 }
 
 async function loadProfile() {
-  const profile = await fetch('/profile').then(r => r.json())
+  if (!selectedUserId) return
+  const profile = await fetch(`/profile?user_id=${selectedUserId}`).then(r => r.json())
   const body = profile.body
-
-  document.getElementById('profileSummary').textContent =
-    `${body.height_cm}cm / ${body.weight_kg}kg · 착용 이력 ${profile.calibration.length}건`
 
   document.getElementById('bodyInfo').innerHTML = `
     <p><strong>${body.height_cm}cm / ${body.weight_kg}kg</strong></p>
-    <p class="text-amber-700 text-xs mt-1">${body.notes}</p>`
+    ${body.notes ? `<p class="text-amber-700 text-xs mt-1">${body.notes}</p>` : ''}`
 
   renderEntries(profile.calibration)
 }
@@ -319,10 +454,11 @@ function renderEntries(calibration) {
   document.getElementById('entryList').innerHTML = calibration.map((c, i) => {
     const sizeData = c.size_data || {}
     const wornMeas = sizeData[c.worn_size]
-    const measStr = wornMeas
+    const measStr  = wornMeas
       ? Object.entries(wornMeas).map(([k, v]) => `${k} ${v}`).join(' · ')
       : ''
-    const productLabel = c.product || (c.url ? `<a href="${c.url}" target="_blank" class="hover:underline">${c.url.replace(/https?:\/\//, '').slice(0, 50)}…</a>` : '')
+    const productLabel = c.product
+      || (c.url ? `<a href="${c.url}" target="_blank" class="hover:underline">${c.url.replace(/https?:\/\//, '').slice(0, 55)}…</a>` : '')
     return `
     <div class="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-3">
       <div class="flex-shrink-0 flex flex-col items-center gap-1">
@@ -352,51 +488,49 @@ function switchTab(name, btn) {
 // ── History Tab ────────────────────────────────────────────────────────────
 
 async function addEntry() {
-  const category = document.getElementById('h-category').value
-  const fit = document.getElementById('h-fit').value.trim()
+  const category    = document.getElementById('h-category').value
+  const fit         = document.getElementById('h-fit').value.trim()
   const productInput = document.getElementById('h-product').value.trim()
-  const isUrl = isShopUrl(productInput)
-
-  // 사이즈: 칩 선택 또는 직접 입력
-  const worn_size = historySelectedSize || document.getElementById('h-size').value.trim()
+  const isUrl       = isShopUrl(productInput)
+  const worn_size   = historySelectedSize || document.getElementById('h-size').value.trim()
 
   if (!worn_size) { alert('착용 사이즈를 선택하거나 입력하세요.'); return }
-  if (!fit) { alert('총평을 입력하세요.'); return }
-
-  const payload = {
-    category,
-    worn_size,
-    fit,
-    product_name: isUrl ? '' : productInput,
-    url: isUrl ? productInput : '',
-    size_data: historyFetchedSizeData || {},
-  }
+  if (!fit)       { alert('총평을 입력하세요.'); return }
 
   await fetch('/profile/wearing', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      user_id:      selectedUserId,
+      category,
+      worn_size,
+      fit,
+      product_name: isUrl ? '' : productInput,
+      url:          isUrl ? productInput : '',
+      size_data:    historyFetchedSizeData || {},
+    }),
   })
 
-  // 폼 초기화
-  document.getElementById('h-size').value = ''
-  document.getElementById('h-fit').value = ''
+  document.getElementById('h-size').value    = ''
+  document.getElementById('h-fit').value     = ''
   document.getElementById('h-product').value = ''
   resetHistorySizePanel()
 
+  await loadUsers()   // 이력 건수 갱신
   await loadProfile()
 }
 
 async function deleteEntry(index) {
   if (!confirm('이 기록을 삭제할까요?')) return
-  await fetch(`/profile/wearing/${index}`, { method: 'DELETE' })
+  await fetch(`/profile/wearing/${index}?user_id=${selectedUserId}`, { method: 'DELETE' })
+  await loadUsers()
   await loadProfile()
 }
 
 // ── Compare Tab ────────────────────────────────────────────────────────────
 
 function updateMeasureInputs() {
-  const cat = document.getElementById('category').value
+  const cat  = document.getElementById('category').value
   const keys = MEASURE_KEYS[cat] || MEASURE_KEYS["기타"]
   document.getElementById('measurementInputs').innerHTML = keys.map(k => `
     <div>
@@ -420,16 +554,15 @@ function togglePromptPanel() {
   const icon  = document.getElementById('promptPanelIcon')
   const isHidden = panel.classList.toggle('hidden')
   icon.textContent = isHidden ? '▶' : '▼'
-  if (!isHidden && !document.getElementById('systemPromptEdit').value) {
-    loadPromptPreview(true)
-  }
+  if (!isHidden && !document.getElementById('systemPromptEdit').value) loadPromptPreview()
 }
 
-async function loadPromptPreview(fromCurrentInput = false) {
+async function loadPromptPreview() {
   const res = await fetch('/preview-prompt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      user_id:         selectedUserId,
       category:        document.getElementById('category').value,
       product_name:    document.getElementById('productName').value || '(제품명 미입력)',
       candidate_sizes: document.getElementById('sizes').value,
@@ -453,6 +586,8 @@ function markPromptModified() {
   }
 }
 
+// ── Compare URL & Sizes ────────────────────────────────────────────────────
+
 function isShopUrl(val) {
   return val.includes('musinsa.com') || val.includes('uniqlo.com')
 }
@@ -463,25 +598,91 @@ function onUrlInput(val) {
   else btn.classList.add('hidden')
 }
 
-// ── History Tab URL 감지 & 자동 사이즈 로드 ──────────────────────────────
+async function fetchSizes() {
+  const url    = document.getElementById('productName').value.trim()
+  const status = document.getElementById('fetchStatus')
+  const btn    = document.getElementById('fetchBtn')
+
+  btn.textContent = '가져오는 중...'
+  btn.disabled = true
+  status.textContent = ''
+  status.classList.remove('hidden')
+
+  try {
+    const res  = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
+    const data = await res.json()
+
+    if (data.error) { status.textContent = '⚠️ ' + data.error; return }
+
+    const sizeNames = Object.keys(data.sizes)
+    document.getElementById('sizes').value = sizeNames.slice(0, 2).join(', ') + ' 중 고민'
+
+    const sec  = document.getElementById('measureSection')
+    const icon = document.getElementById('measureToggleIcon')
+    if (sec.classList.contains('hidden')) {
+      sec.classList.remove('hidden')
+      icon.textContent = '▼'
+      updateMeasureInputs()
+    }
+
+    const firstSize = data.sizes[sizeNames[0]] || {}
+    const aliases = {
+      '총장':   ['총장', '전체 길이'],
+      '어깨':   ['어깨너비', '어깨', '어깨너비(솔기에서 솔기까지)'],
+      '가슴':   ['가슴단면', '가슴', '가슴너비'],
+      '소매':   ['소매길이', '소매', '등 중심부터 소매까지 길이'],
+      '허리':   ['허리단면', '허리', '허리너비'],
+      '엉덩이': ['힙단면', '엉덩이', '힙너비'],
+      '밑위':   ['밑위', '밑위길이'],
+      '밑단':   ['밑단너비', '밑단'],
+    }
+    document.querySelectorAll('#measurementInputs input').forEach(el => {
+      const lookups = aliases[el.dataset.key] || [el.dataset.key]
+      for (const k of lookups) { if (firstSize[k]) { el.value = firstSize[k]; break } }
+    })
+
+    status.textContent = `✓ ${data.type} 실측 로드 (${sizeNames[0]} 기준) — ${sizeNames.join(', ')}`
+    status.classList.replace('text-gray-400', 'text-indigo-600')
+  } catch (e) {
+    status.textContent = '오류: ' + e.message
+  } finally {
+    btn.textContent = '실측 가져오기'
+    btn.disabled = false
+  }
+}
+
+function toggleMeasure() {
+  const sec  = document.getElementById('measureSection')
+  const icon = document.getElementById('measureToggleIcon')
+  const hidden = sec.classList.toggle('hidden')
+  icon.textContent = hidden ? '▶' : '▼'
+  if (!hidden) updateMeasureInputs()
+}
+
+function getMeasurements() {
+  const result = {}
+  document.querySelectorAll('#measurementInputs input').forEach(el => {
+    if (el.value.trim()) result[el.dataset.key] = el.value.trim()
+  })
+  return result
+}
+
+// ── History Tab URL & Size Chips ───────────────────────────────────────────
 
 let historyFetchedSizeData = null
-let historySelectedSize = null
-let historyUrlDebounce = null
+let historySelectedSize    = null
+let historyUrlDebounce     = null
 
 function onHistoryUrlInput(val) {
   clearTimeout(historyUrlDebounce)
   resetHistorySizePanel()
-
   if (!isShopUrl(val)) return
-
-  // 500ms 디바운스 후 자동 로드
   historyUrlDebounce = setTimeout(() => fetchHistorySizes(), 500)
 }
 
 function resetHistorySizePanel() {
   historyFetchedSizeData = null
-  historySelectedSize = null
+  historySelectedSize    = null
   document.getElementById('h-sizePanel').classList.add('hidden')
   document.getElementById('h-sizeChips').innerHTML = ''
   document.getElementById('h-manualSizeWrap').classList.remove('hidden')
@@ -490,15 +691,15 @@ function resetHistorySizePanel() {
 }
 
 async function fetchHistorySizes() {
-  const url = document.getElementById('h-product').value.trim()
-  const status = document.getElementById('h-fetchStatus')
+  const url     = document.getElementById('h-product').value.trim()
+  const status  = document.getElementById('h-fetchStatus')
   const spinner = document.getElementById('h-fetchSpinner')
 
   spinner.classList.remove('hidden')
   status.classList.add('hidden')
 
   try {
-    const res = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
+    const res  = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
     const data = await res.json()
 
     if (data.error) {
@@ -524,18 +725,16 @@ async function fetchHistorySizes() {
 }
 
 function renderSizeChips(sizeNames) {
-  const panel = document.getElementById('h-sizePanel')
-  const chips = document.getElementById('h-sizeChips')
+  const chips      = document.getElementById('h-sizeChips')
   const manualWrap = document.getElementById('h-manualSizeWrap')
 
   chips.innerHTML = sizeNames.map(name => `
-    <button type="button" onclick="selectHistorySize('${name}')"
-      id="hchip-${name}"
+    <button type="button" onclick="selectHistorySize('${name}')" id="hchip-${name}"
       class="size-chip px-4 py-1.5 text-sm font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all">
       ${name}
     </button>`).join('')
 
-  panel.classList.remove('hidden')
+  document.getElementById('h-sizePanel').classList.remove('hidden')
   manualWrap.classList.add('hidden')
   document.getElementById('h-size').value = ''
   historySelectedSize = null
@@ -544,101 +743,22 @@ function renderSizeChips(sizeNames) {
 function selectHistorySize(name) {
   historySelectedSize = name
   document.querySelectorAll('.size-chip').forEach(el => {
-    const isSelected = el.id === `hchip-${name}`
-    el.className = isSelected
+    el.className = el.id === `hchip-${name}`
       ? 'size-chip px-4 py-1.5 text-sm font-medium rounded-full border-2 border-indigo-600 bg-indigo-50 text-indigo-700 transition-all'
       : 'size-chip px-4 py-1.5 text-sm font-medium rounded-full border border-gray-300 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition-all'
   })
 }
 
-async function fetchSizes() {
-  const url = document.getElementById('productName').value.trim()
-  const status = document.getElementById('fetchStatus')
-  const btn = document.getElementById('fetchBtn')
-
-  btn.textContent = '가져오는 중...'
-  btn.disabled = true
-  status.textContent = ''
-  status.classList.remove('hidden')
-
-  try {
-    const res = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
-    const data = await res.json()
-
-    if (data.error) {
-      status.textContent = '⚠️ ' + data.error
-      return
-    }
-
-    // 사이즈 목록 파싱해서 고려 사이즈 자동 제안
-    const sizeNames = Object.keys(data.sizes)
-    document.getElementById('sizes').value = sizeNames.slice(0, 2).join(', ') + ' 중 고민'
-
-    // 실측 섹션 열기
-    const sec = document.getElementById('measureSection')
-    const icon = document.getElementById('measureToggleIcon')
-    if (sec.classList.contains('hidden')) {
-      sec.classList.remove('hidden')
-      icon.textContent = '▼'
-      updateMeasureInputs()
-    }
-
-    // 첫 번째 사이즈(보통 S or M)의 실측으로 입력란 채우기
-    const firstSize = data.sizes[sizeNames[0]] || {}
-    document.querySelectorAll('#measurementInputs input').forEach(el => {
-      const key = el.dataset.key
-      // 무신사/유니클로 측정항목 이름 매핑
-      const aliases = {
-        '총장':  ['총장', '전체 길이'],
-        '어깨':  ['어깨너비', '어깨', '어깨너비(솔기에서 솔기까지)'],
-        '가슴':  ['가슴단면', '가슴', '가슴너비'],
-        '소매':  ['소매길이', '소매', '등 중심부터 소매까지 길이'],
-        '허리':  ['허리단면', '허리', '허리너비'],
-        '엉덩이':['힙단면', '엉덩이', '힙너비'],
-        '밑위':  ['밑위', '밑위길이'],
-        '밑단':  ['밑단너비', '밑단'],
-      }
-      const lookups = aliases[key] || [key]
-      for (const k of lookups) {
-        if (firstSize[k]) { el.value = firstSize[k]; break }
-      }
-    })
-
-    status.textContent = `✓ ${data.type} 실측 로드 (${sizeNames[0]} 기준) — 사이즈: ${sizeNames.join(', ')}`
-    status.classList.replace('text-gray-400', 'text-indigo-600')
-
-  } catch (e) {
-    status.textContent = '오류: ' + e.message
-  } finally {
-    btn.textContent = '실측 가져오기'
-    btn.disabled = false
-  }
-}
-
-function toggleMeasure() {
-  const sec = document.getElementById('measureSection')
-  const icon = document.getElementById('measureToggleIcon')
-  const hidden = sec.classList.toggle('hidden')
-  icon.textContent = hidden ? '▶' : '▼'
-  if (!hidden) updateMeasureInputs()
-}
-
-function getMeasurements() {
-  const result = {}
-  document.querySelectorAll('#measurementInputs input').forEach(el => {
-    if (el.value.trim()) result[el.dataset.key] = el.value.trim()
-  })
-  return result
-}
+// ── Run Compare ────────────────────────────────────────────────────────────
 
 async function runCompare() {
-  const anthropicKey = document.getElementById('anthropicKey').value.trim()
-  const openaiKey    = document.getElementById('openaiKey').value.trim()
+  const anthropicKey   = document.getElementById('anthropicKey').value.trim()
+  const openaiKey      = document.getElementById('openaiKey').value.trim()
   const needsAnthropic = selectedModels.some(m => ['claude-opus-4-7','claude-sonnet-4-6','claude-haiku-4-5-20251001'].includes(m))
   const needsOpenAI    = selectedModels.some(m => ['gpt-4o','gpt-4o-mini'].includes(m))
   if (needsAnthropic && !anthropicKey) { alert('Anthropic API Key를 입력하세요.'); return }
   if (needsOpenAI    && !openaiKey)    { alert('OpenAI API Key를 입력하세요.');    return }
-  if (!selectedModels.length) { alert('모델을 하나 이상 선택하세요.'); return }
+  if (!selectedModels.length)          { alert('모델을 하나 이상 선택하세요.'); return }
   if (!document.getElementById('productName').value.trim()) { alert('제품명을 입력하세요.'); return }
 
   const btn = document.getElementById('runBtn')
@@ -650,15 +770,15 @@ async function runCompare() {
   grid.innerHTML = selectedModels.map(m => modelCard(m)).join('')
   document.getElementById('results').classList.remove('hidden')
   document.getElementById('results').scrollIntoView({ behavior: 'smooth' })
-
   selectedModels.forEach(m => {
     document.getElementById(`text-${m}`).classList.add('streaming')
     document.getElementById(`status-${m}`).textContent = '생성 중...'
   })
 
   const body = {
-    anthropic_key:   document.getElementById('anthropicKey').value.trim(),
-    openai_key:      document.getElementById('openaiKey').value.trim(),
+    user_id:         selectedUserId,
+    anthropic_key:   anthropicKey,
+    openai_key:      openaiKey,
     models:          selectedModels,
     category:        document.getElementById('category').value,
     product_name:    document.getElementById('productName').value,
@@ -675,7 +795,7 @@ async function runCompare() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    const reader = response.body.getReader()
+    const reader  = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     while (true) {
@@ -700,7 +820,6 @@ async function runCompare() {
 function handleEvent(event) {
   if (event.type === 'all_done' || !event.model) return
   const m = event.model
-
   if (event.type === 'token') {
     document.getElementById(`text-${m}`).textContent += event.text
   }
@@ -723,25 +842,16 @@ function handleEvent(event) {
 
 function modelCard(modelId) {
   const labels = {
-    'claude-opus-4-7':           'Opus 4.7',
-    'claude-sonnet-4-6':         'Sonnet 4.6',
-    'claude-haiku-4-5-20251001': 'Haiku 4.5',
-    'gpt-4o':                    'GPT-4o',
-    'gpt-4o-mini':               'GPT-4o mini',
+    'claude-opus-4-7': 'Opus 4.7', 'claude-sonnet-4-6': 'Sonnet 4.6',
+    'claude-haiku-4-5-20251001': 'Haiku 4.5', 'gpt-4o': 'GPT-4o', 'gpt-4o-mini': 'GPT-4o mini',
   }
   const colors = {
-    'claude-opus-4-7':           'border-purple-200',
-    'claude-sonnet-4-6':         'border-blue-200',
-    'claude-haiku-4-5-20251001': 'border-sky-200',
-    'gpt-4o':                    'border-emerald-200',
-    'gpt-4o-mini':               'border-teal-200',
+    'claude-opus-4-7': 'border-purple-200', 'claude-sonnet-4-6': 'border-blue-200',
+    'claude-haiku-4-5-20251001': 'border-sky-200', 'gpt-4o': 'border-emerald-200', 'gpt-4o-mini': 'border-teal-200',
   }
   const headerColors = {
-    'claude-opus-4-7':           'text-purple-800 bg-purple-50',
-    'claude-sonnet-4-6':         'text-blue-800 bg-blue-50',
-    'claude-haiku-4-5-20251001': 'text-sky-800 bg-sky-50',
-    'gpt-4o':                    'text-emerald-800 bg-emerald-50',
-    'gpt-4o-mini':               'text-teal-800 bg-teal-50',
+    'claude-opus-4-7': 'text-purple-800 bg-purple-50', 'claude-sonnet-4-6': 'text-blue-800 bg-blue-50',
+    'claude-haiku-4-5-20251001': 'text-sky-800 bg-sky-50', 'gpt-4o': 'text-emerald-800 bg-emerald-50', 'gpt-4o-mini': 'text-teal-800 bg-teal-50',
   }
   return `
     <div class="rounded-xl border ${colors[modelId] || 'border-gray-200'} overflow-hidden shadow-sm bg-white">

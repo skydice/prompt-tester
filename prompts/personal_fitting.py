@@ -86,8 +86,10 @@ def build_prompt(
     candidate_sizes: str,
     measurements: dict | None = None,
     extra_info: str = "",
+    profile: dict | None = None,
 ) -> tuple[str, str]:
-    profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    if profile is None:
+        profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
     profile_summary = build_profile_summary(profile)
 
     if measurements:
