@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from prompts.personal_fitting import build_prompt
-from crawler import fetch_sizes
+from size_crawler import fetch_sizes
 
 app = FastAPI()
 
