@@ -2,6 +2,8 @@
 import re
 
 _CM_EXTRACT = re.compile(r"(\d+\.?\d*)")
+# "01_S", "1. M", "01 XL" → "S", "M", "XL"
+_SIZE_NAME_PREFIX = re.compile(r"^\d+[._\-\s]+", )
 
 
 def normalize_value(v: str) -> str:
@@ -30,10 +32,15 @@ def normalize_value(v: str) -> str:
     return v
 
 
+def normalize_size_name(name: str) -> str:
+    """'01_S', '1. M', '02 XL' → 'S', 'M', 'XL'"""
+    return _SIZE_NAME_PREFIX.sub("", name).strip()
+
+
 def normalize(result: dict) -> dict:
     sizes = result.get("sizes") or {}
-    normalized = {
-        size_name: {k: normalize_value(v) for k, v in measurements.items()}
-        for size_name, measurements in sizes.items()
-    }
+    normalized: dict = {}
+    for size_name, measurements in sizes.items():
+        clean = normalize_size_name(size_name)
+        normalized[clean] = {k: normalize_value(v) for k, v in measurements.items()}
     return {**result, "sizes": normalized}

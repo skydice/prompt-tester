@@ -148,6 +148,56 @@ async def _ask_vision(
     return _parse_vision_response(response.content[0].text)
 
 
+def _has_text(img_bytes: bytes) -> bool:
+    """OpenCV로 사이즈 차트성 패턴이 없는 이미지를 빠르게 걸러낸다.
+
+    두 신호 중 하나라도 충족하면 True:
+    1. 테이블 구조 — 수평선 + 수직선 동시 존재 (경계선이 있는 표)
+    2. 소형 텍스트 blob 다수 — 숫자/글자가 빽빽하게 분포 (사이즈 숫자 행)
+    """
+    import cv2
+    import numpy as np
+
+    arr = np.frombuffer(img_bytes, np.uint8)
+    gray = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return True  # 디코드 실패 시 Vision에 넘김
+
+    h, w = gray.shape
+    if h > 800:
+        gray = cv2.resize(gray, (int(w * 800 / h), 800))
+    h, w = gray.shape
+
+    thresh = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 5
+    )
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    small = sum(1 for c in contours if 15 < cv2.contourArea(c) < 600)
+
+    # 1. 명확한 테이블 격자 (수평+수직선 모두 뚜렷) + 최소 텍스트
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (w // 5, 1))
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, h // 8))
+    h_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, h_kernel)
+    v_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, v_kernel)
+    hr = np.sum(h_lines > 0) / h_lines.size
+    vr = np.sum(v_lines > 0) / v_lines.size
+    if hr > 0.015 and vr > 0.008 and small > 30:
+        return True
+
+    # 2. 촘촘한 소형 blob → 숫자/글자 빽빽 (모델 사진은 95-150, 사이즈 차트는 200+)
+    return small > 180
+
+
+def _is_complete(sizes: dict) -> bool:
+    """사이즈 2개 이상 + 각각 유효한 측정값(대시 제외) 3개 이상이면 충분한 결과."""
+    if len(sizes) < 2:
+        return False
+    def valid(m):
+        return sum(1 for v in m.values() if v and v not in ("-", "—", ""))
+    return all(valid(m) >= 3 for m in sizes.values())
+
+
 def _merge_sizes(a: dict, b: dict) -> dict:
     """두 사이즈 dict를 병합 — 같은 사이즈명이면 측정 항목 합산."""
     merged = {k: dict(v) for k, v in a.items()}
@@ -172,12 +222,14 @@ async def _process_image(img: Image.Image, client, tracker=None) -> dict[str, di
         if sizes:
             return sizes
 
-    # 슬라이싱 폴백: 각 chunk 결과 병합
+    # 슬라이싱 폴백: 각 chunk 결과 병합, 충분한 결과 나오면 조기 종료
     merged: dict = {}
     for chunk in _slice_image(img):
         sizes = await _ask_vision(client, chunk, tracker=tracker)
         if sizes:
             merged = _merge_sizes(merged, sizes)
+            if _is_complete(merged):
+                break
 
     return merged if merged else None
 
@@ -190,16 +242,20 @@ async def extract_from_urls(image_urls: list[str], tracker=None) -> dict | None:
         return None
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        for url in image_urls[:25]:
+        for url in image_urls[:15]:
             try:
                 r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
                 r.raise_for_status()
-                img = Image.open(io.BytesIO(r.content))
+                img_bytes = r.content
+                img = Image.open(io.BytesIO(img_bytes))
             except Exception:
                 continue
 
             w, h = img.size
             if h < 500 or h < w * 1.2:
+                continue
+
+            if not _has_text(img_bytes):
                 continue
 
             sizes = await _process_image(img, client, tracker=tracker)

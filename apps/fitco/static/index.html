@@ -106,6 +106,12 @@
               class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500">
           </div>
           <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Gemini Key</label>
+            <input id="geminiKey" type="password" placeholder="AIza..." autocomplete="off"
+              onchange="saveKeys()"
+              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-400">
+          </div>
+          <div>
             <label class="block text-xs font-semibold text-gray-600 mb-2">모델 선택</label>
             <div id="modelList" class="space-y-1.5"></div>
           </div>
@@ -299,6 +305,7 @@ const CAT_COLORS = {
 }
 
 let selectedModels = []
+let allModels = []
 let selectedUserId = localStorage.getItem('fitco_user_id') || ''
 
 // ── Keys ───────────────────────────────────────────────────────────────────
@@ -306,13 +313,16 @@ let selectedUserId = localStorage.getItem('fitco_user_id') || ''
 function saveKeys() {
   localStorage.setItem('fitco_anthropic_key', document.getElementById('anthropicKey').value)
   localStorage.setItem('fitco_openai_key',    document.getElementById('openaiKey').value)
+  localStorage.setItem('fitco_gemini_key',    document.getElementById('geminiKey').value)
 }
 
 function loadKeys() {
   const ak = localStorage.getItem('fitco_anthropic_key')
   const ok = localStorage.getItem('fitco_openai_key')
+  const gk = localStorage.getItem('fitco_gemini_key')
   if (ak) document.getElementById('anthropicKey').value = ak
   if (ok) document.getElementById('openaiKey').value    = ok
+  if (gk) document.getElementById('geminiKey').value    = gk
 }
 
 // ── User Management ────────────────────────────────────────────────────────
@@ -412,10 +422,11 @@ async function init() {
   loadKeys()
 
   // Models
-  const models = await fetch('/models').then(r => r.json())
+  allModels = await fetch('/models').then(r => r.json())
   const list = document.getElementById('modelList')
-  const anthropicModels = models.filter(m => m.provider === 'anthropic')
-  const openaiModels    = models.filter(m => m.provider === 'openai')
+  const anthropicModels = allModels.filter(m => m.provider === 'anthropic')
+  const openaiModels    = allModels.filter(m => m.provider === 'openai')
+  const geminiModels    = allModels.filter(m => m.provider === 'gemini')
 
   const renderGroup = (label, color, items, defaultCheckedCount) => {
     list.innerHTML += `<p class="text-xs font-semibold ${color} mt-1">${label}</p>`
@@ -433,6 +444,7 @@ async function init() {
   }
   renderGroup('Anthropic', 'text-purple-600', anthropicModels, 1)
   renderGroup('OpenAI',    'text-green-600',  openaiModels,    1)
+  renderGroup('Gemini',    'text-orange-500', geminiModels,    0)
 
   // Users & Profile
   await loadUsers()
@@ -773,10 +785,14 @@ function selectHistorySize(name) {
 async function runCompare() {
   const anthropicKey   = document.getElementById('anthropicKey').value.trim()
   const openaiKey      = document.getElementById('openaiKey').value.trim()
-  const needsAnthropic = selectedModels.some(m => ['claude-opus-4-7','claude-sonnet-4-6','claude-haiku-4-5-20251001'].includes(m))
-  const needsOpenAI    = selectedModels.some(m => ['gpt-4o','gpt-4o-mini'].includes(m))
+  const geminiKey      = document.getElementById('geminiKey').value.trim()
+  const providerOf     = id => allModels.find(m => m.id === id)?.provider
+  const needsAnthropic = selectedModels.some(m => providerOf(m) === 'anthropic')
+  const needsOpenAI    = selectedModels.some(m => providerOf(m) === 'openai')
+  const needsGemini    = selectedModels.some(m => providerOf(m) === 'gemini')
   if (needsAnthropic && !anthropicKey) { alert('Anthropic API Key를 입력하세요.'); return }
   if (needsOpenAI    && !openaiKey)    { alert('OpenAI API Key를 입력하세요.');    return }
+  if (needsGemini    && !geminiKey)    { alert('Gemini API Key를 입력하세요.');    return }
   if (!selectedModels.length)          { alert('모델을 하나 이상 선택하세요.'); return }
   if (!document.getElementById('productName').value.trim()) { alert('제품명을 입력하세요.'); return }
 
@@ -798,6 +814,7 @@ async function runCompare() {
     user_id:         selectedUserId,
     anthropic_key:   anthropicKey,
     openai_key:      openaiKey,
+    gemini_key:      geminiKey,
     models:          selectedModels,
     category:        document.getElementById('category').value,
     product_name:    document.getElementById('productName').value,
@@ -861,22 +878,25 @@ function handleEvent(event) {
 }
 
 function modelCard(modelId) {
-  const labels = {
-    'claude-opus-4-7': 'Opus 4.7', 'claude-sonnet-4-6': 'Sonnet 4.6',
-    'claude-haiku-4-5-20251001': 'Haiku 4.5', 'gpt-4o': 'GPT-4o', 'gpt-4o-mini': 'GPT-4o mini',
-  }
+  const modelInfo = allModels.find(m => m.id === modelId) || {}
+  const label = modelInfo.label || modelId
+  const provider = modelInfo.provider || ''
   const colors = {
     'claude-opus-4-7': 'border-purple-200', 'claude-sonnet-4-6': 'border-blue-200',
-    'claude-haiku-4-5-20251001': 'border-sky-200', 'gpt-4o': 'border-emerald-200', 'gpt-4o-mini': 'border-teal-200',
+    'claude-haiku-4-5-20251001': 'border-sky-200',
+    'o3': 'border-emerald-200', 'o4-mini': 'border-teal-200',
+    'gemini-2.5-pro': 'border-orange-200', 'gemini-2.5-flash': 'border-amber-200',
   }
   const headerColors = {
     'claude-opus-4-7': 'text-purple-800 bg-purple-50', 'claude-sonnet-4-6': 'text-blue-800 bg-blue-50',
-    'claude-haiku-4-5-20251001': 'text-sky-800 bg-sky-50', 'gpt-4o': 'text-emerald-800 bg-emerald-50', 'gpt-4o-mini': 'text-teal-800 bg-teal-50',
+    'claude-haiku-4-5-20251001': 'text-sky-800 bg-sky-50',
+    'o3': 'text-emerald-800 bg-emerald-50', 'o4-mini': 'text-teal-800 bg-teal-50',
+    'gemini-2.5-pro': 'text-orange-800 bg-orange-50', 'gemini-2.5-flash': 'text-amber-800 bg-amber-50',
   }
   return `
     <div class="rounded-xl border ${colors[modelId] || 'border-gray-200'} overflow-hidden shadow-sm bg-white">
       <div class="px-4 py-3 flex items-center justify-between ${headerColors[modelId] || 'bg-gray-50 text-gray-700'}">
-        <span class="font-semibold text-sm">${labels[modelId] || modelId}</span>
+        <span class="font-semibold text-sm">${label}</span>
         <span id="status-${modelId}" class="text-xs opacity-60">대기중</span>
       </div>
       <div class="p-4 min-h-[280px]">

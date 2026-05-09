@@ -6,6 +6,8 @@ from pathlib import Path
 
 import anthropic
 import openai as openai_sdk
+from google import genai as google_genai
+from google.genai import types as genai_types
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,11 +19,13 @@ from size_crawler import fetch_sizes
 app = FastAPI()
 
 MODELS = {
-    "claude-opus-4-7":           {"label": "Opus 4.7",     "provider": "anthropic", "input": 15.0,  "output": 75.0},
-    "claude-sonnet-4-6":         {"label": "Sonnet 4.6",   "provider": "anthropic", "input": 3.0,   "output": 15.0},
-    "claude-haiku-4-5-20251001": {"label": "Haiku 4.5",    "provider": "anthropic", "input": 0.8,   "output": 4.0},
-    "gpt-4o":                    {"label": "GPT-4o",        "provider": "openai",    "input": 2.5,   "output": 10.0},
-    "gpt-4o-mini":               {"label": "GPT-4o mini",   "provider": "openai",    "input": 0.15,  "output": 0.60},
+    "claude-opus-4-7":           {"label": "Opus 4.7",          "provider": "anthropic", "input": 15.0,  "output": 75.0},
+    "claude-sonnet-4-6":         {"label": "Sonnet 4.6",        "provider": "anthropic", "input": 3.0,   "output": 15.0},
+    "claude-haiku-4-5-20251001": {"label": "Haiku 4.5",         "provider": "anthropic", "input": 0.8,   "output": 4.0},
+    "o3":                        {"label": "o3",                 "provider": "openai",    "input": 10.0,  "output": 40.0},
+    "o4-mini":                   {"label": "o4-mini",            "provider": "openai",    "input": 1.1,   "output": 4.4},
+    "gemini-2.5-pro":            {"label": "Gemini 2.5 Pro",     "provider": "gemini",    "input": 1.25,  "output": 10.0},
+    "gemini-2.5-flash":          {"label": "Gemini 2.5 Flash",   "provider": "gemini",    "input": 0.15,  "output": 0.60},
 }
 
 PROFILES_DIR = Path(__file__).parent / "profiles"
@@ -94,6 +98,7 @@ class CompareRequest(BaseModel):
     user_id: str = ""
     anthropic_key: str = ""
     openai_key: str = ""
+    gemini_key: str = ""
     models: list[str]
     category: str
     product_name: str
@@ -250,11 +255,16 @@ async def _stream_anthropic(client, model, system, user, queue):
 async def _stream_openai(client, model, system, user, queue):
     start = time.perf_counter()
     input_tokens = output_tokens = 0
+    is_o_series = model.startswith("o")
     try:
         stream = await client.chat.completions.create(
-            model=model, max_tokens=700, stream=True,
+            model=model, stream=True,
             stream_options={"include_usage": True},
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            **({"max_completion_tokens": 700} if is_o_series else {"max_tokens": 700}),
+            messages=[
+                {"role": "developer" if is_o_series else "system", "content": system},
+                {"role": "user", "content": user},
+            ],
         )
         async for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
@@ -263,6 +273,37 @@ async def _stream_openai(client, model, system, user, queue):
             if chunk.usage:
                 input_tokens  = chunk.usage.prompt_tokens
                 output_tokens = chunk.usage.completion_tokens
+    except Exception as e:
+        await queue.put({"model": model, "type": "error", "text": str(e)})
+        return
+
+    elapsed  = time.perf_counter() - start
+    pricing  = MODELS[model]
+    cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    await queue.put({"model": model, "type": "done", "latency_sec": round(elapsed, 2),
+                     "input_tokens": input_tokens, "output_tokens": output_tokens,
+                     "cost_usd": round(cost_usd, 6)})
+
+
+async def _stream_gemini(api_key: str, model: str, system: str, user: str, queue):
+    start = time.perf_counter()
+    input_tokens = output_tokens = 0
+    try:
+        client = google_genai.Client(api_key=api_key)
+        config = genai_types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=700,
+        )
+        async for chunk in client.aio.models.generate_content_stream(
+            model=model, contents=user, config=config,
+        ):
+            if chunk.text:
+                await queue.put({"model": model, "type": "token", "text": chunk.text})
+            if chunk.usage_metadata:
+                if chunk.usage_metadata.prompt_token_count:
+                    input_tokens = chunk.usage_metadata.prompt_token_count
+                if chunk.usage_metadata.candidates_token_count:
+                    output_tokens = chunk.usage_metadata.candidates_token_count
     except Exception as e:
         await queue.put({"model": model, "type": "error", "text": str(e)})
         return
@@ -306,6 +347,8 @@ async def compare(req: CompareRequest):
                 tasks.append(asyncio.create_task(_stream_anthropic(anthropic_client, m, system, user, queue)))
             elif provider == "openai" and openai_client:
                 tasks.append(asyncio.create_task(_stream_openai(openai_client, m, system, user, queue)))
+            elif provider == "gemini" and req.gemini_key:
+                tasks.append(asyncio.create_task(_stream_gemini(req.gemini_key, m, system, user, queue)))
             else:
                 await queue.put({"model": m, "type": "error", "text": f"{provider} API Key가 없어요."})
 
