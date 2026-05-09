@@ -12,7 +12,11 @@ dependencies = [
     "httpx>=0.27.0",
     "lxml>=5.2.0",
     "python-dotenv>=1.0.0",
+    "size-crawler",
 ]
+
+[tool.uv.sources]
+size-crawler = { workspace = true }
 
 [project.scripts]
 universal-size-crawler = "universal_size_crawler.cli:main"

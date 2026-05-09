@@ -1,8 +1,26 @@
-"""전략 오케스트레이션 — DOM → API 스니핑 → 이미지 VLLM 순서로 폴백."""
+"""전략 오케스트레이션 — 기지 브랜드 → DOM → API 스니핑 → 이미지 VLLM 순서로 폴백."""
 from playwright.async_api import Page, async_playwright
 
 from .normalizer import normalize
 from .strategies import api_sniff, dom, image_vllm
+
+
+def _try_known_brand(url: str) -> dict | None:
+    """유니클로·무신사 등 기지 브랜드는 size-crawler로 바로 위임."""
+    try:
+        from size_crawler import detect_url_brand, fetch_musinsa_sizes, fetch_uniqlo_sizes
+        brand = detect_url_brand(url)
+        if brand == "uniqlo":
+            result = fetch_uniqlo_sizes(url)
+        elif brand == "musinsa":
+            result = fetch_musinsa_sizes(url)
+        else:
+            return None
+        if "error" not in result:
+            return {**result, "source": "known_api"}
+    except Exception:
+        pass
+    return None
 
 _HEADERS = {
     "User-Agent": (
@@ -102,6 +120,11 @@ def _collect_lazy_image_urls(html: str, base_url: str) -> list[str]:
 
 
 async def fetch_sizes(url: str) -> dict:
+    # 0. 기지 브랜드 (유니클로, 무신사) — Playwright 없이 API 직접 호출
+    result = _try_known_brand(url)
+    if result:
+        return result
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(extra_http_headers=_HEADERS)
