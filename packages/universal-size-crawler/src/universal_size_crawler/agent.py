@@ -33,11 +33,35 @@ _DRAWER_SELECTORS = [
 ]
 
 
+async def _dismiss_overlays(page: Page):
+    """쿠키 동의, 뉴스레터 팝업 등 클릭을 막는 오버레이 닫기."""
+    dismiss_selectors = [
+        "#onetrust-accept-btn-handler",
+        "[id*='cookie'] button",
+        "[class*='cookie'] button",
+        "[id*='consent'] button",
+        "[aria-label='닫기']",
+        "[aria-label='Close']",
+        "button[class*='close']",
+        "button[class*='dismiss']",
+    ]
+    for sel in dismiss_selectors:
+        try:
+            btn = page.locator(sel).first
+            if await btn.is_visible():
+                await btn.click(timeout=1_500)
+                await page.wait_for_timeout(300)
+        except Exception:
+            continue
+
+
 async def _try_open_size_drawer(page: Page) -> bool:
     """사이즈 가이드 버튼을 찾아 클릭하고 drawer가 열리면 True 반환.
 
     핵심: 텍스트가 짧은 leaf 요소만 클릭 후보로 삼아 큰 wrapper div 오클릭 방지.
     """
+    await _dismiss_overlays(page)
+
     for kw in _SIZE_BUTTON_KEYWORDS:
         candidates = page.locator("a, button, span").filter(has_text=kw)
         count = await candidates.count()

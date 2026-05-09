@@ -13,6 +13,9 @@ _NUMERIC_SIZE = re.compile(r"^[0-9]{2,3}$")
 _MEASUREMENT_PART = re.compile(r"총장|어깨|가슴|허리|엉덩이|밑위|허벅지|소매|넥|목|shoulder|chest|waist|length|sleeve", re.I)
 
 
+_NUMERIC_VALUE = re.compile(r"\d+\.?\d*")
+
+
 def _score_table(table) -> int:
     """사이즈 테이블일 가능성 점수 (높을수록 좋음)."""
     rows = table.find_all("tr")
@@ -20,6 +23,11 @@ def _score_table(table) -> int:
         return 0
 
     text = table.get_text()
+
+    # 숫자 값이 전혀 없는 테이블은 사이즈표가 아님 (스펙 설명표 등 제외)
+    if not _NUMERIC_VALUE.search(text):
+        return 0
+
     score = 0
     score += len(_CM_PATTERN.findall(text)) * 3
     score += len(_SIZE_KEYWORDS.findall(text)) * 2
