@@ -866,7 +866,6 @@ dependencies = [
     { name = "pillow" },
     { name = "playwright" },
     { name = "python-dotenv" },
-    { name = "size-crawler" },
 ]
 
 [package.metadata]
@@ -879,7 +878,6 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.3.0" },
     { name = "playwright", specifier = ">=1.44.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "size-crawler", editable = "packages/size-crawler" },
 ]
 
 [[package]]

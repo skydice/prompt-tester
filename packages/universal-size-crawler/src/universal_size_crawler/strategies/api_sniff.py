@@ -1,13 +1,29 @@
 """API 스니핑 전략 — 네트워크 요청 인터셉트로 사이즈 JSON 탐지."""
 import json
+import os
 import re
 
-from playwright.async_api import Page, Request, Response
+from playwright.async_api import Page, Response
 
 _SIZE_KEYS = re.compile(
     r"size|measurement|chest|shoulder|waist|length|sleeve|총장|어깨|가슴|사이즈|실측",
     re.I,
 )
+
+_CLAUDE_EXTRACT_PROMPT = """아래 JSON에서 의류 사이즈 차트 데이터를 추출해줘.
+
+반환 형식:
+{
+  "sizes": {
+    "M": {"총장": "59cm", "어깨너비": "44cm"},
+    "L": {"총장": "62cm", "어깨너비": "47cm"}
+  }
+}
+
+사이즈 데이터가 없으면 {"sizes": null} 반환. JSON만 반환.
+
+---
+"""
 
 
 def _score_json(obj, depth: int = 0) -> int:
@@ -24,11 +40,10 @@ def _score_json(obj, depth: int = 0) -> int:
 
 
 def _extract_sizes_from_json(obj) -> dict[str, dict[str, str]] | None:
-    """JSON에서 sizes 형태 구조 탐색."""
+    """JSON에서 sizes 형태 구조 패턴 매칭."""
     if not isinstance(obj, dict):
         return None
 
-    # 카페24 actual-size 패턴: sizes[].name + sizes[].items[].name/value
     for key in ("sizes", "sizeList", "size_list", "sizeChart", "size_chart"):
         if key not in obj:
             continue
@@ -42,7 +57,29 @@ def _extract_sizes_from_json(obj) -> dict[str, dict[str, str]] | None:
             name = entry.get("name") or entry.get("sizeName") or entry.get("label")
             if not name:
                 continue
-            items = entry.get("items") or entry.get("measurements") or entry.get("sizeParts") or []
+            # sizeParts[].measurements[].value 패턴 (유니클로 등)
+            size_parts = entry.get("sizeParts") or []
+            if size_parts:
+                measurements = {}
+                for part in size_parts:
+                    k = part.get("name") or part.get("partName")
+                    raw_measurements = part.get("measurements") or []
+                    cm_val = next(
+                        (m.get("value") for m in raw_measurements if m.get("unit") == "cm"),
+                        None,
+                    )
+                    if cm_val is None:
+                        cm_val = next(
+                            (m.get("value") for m in raw_measurements),
+                            None,
+                        )
+                    if k and cm_val is not None:
+                        measurements[k] = f"{cm_val}cm" if "cm" not in str(cm_val) else str(cm_val)
+                if measurements:
+                    result[name] = measurements
+                continue
+            # items[].name/value 패턴 (무신사 등)
+            items = entry.get("items") or entry.get("measurements") or []
             measurements = {}
             for item in items:
                 if not isinstance(item, dict):
@@ -75,6 +112,39 @@ def _search_list(lst) -> dict[str, dict[str, str]] | None:
     return None
 
 
+async def _extract_with_claude(body: dict) -> dict[str, dict[str, str]] | None:
+    """패턴 매칭 실패 시 Claude로 JSON 구조 해석."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    try:
+        from anthropic import AsyncAnthropic
+        ac = AsyncAnthropic()
+        # 너무 큰 JSON은 핵심 부분만 전달 (토큰 절약)
+        json_str = json.dumps(body, ensure_ascii=False)
+        if len(json_str) > 8000:
+            json_str = json_str[:8000] + "\n...(truncated)"
+
+        response = await ac.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            messages=[{
+                "role": "user",
+                "content": _CLAUDE_EXTRACT_PROMPT + json_str,
+            }],
+        )
+        text = response.content[0].text
+        match = re.search(r"\{.*\}", text, re.S)
+        if not match:
+            return None
+        data = json.loads(match.group())
+        sizes = data.get("sizes")
+        if sizes and isinstance(sizes, dict):
+            return sizes
+    except Exception:
+        pass
+    return None
+
+
 class ApiSniffer:
     def __init__(self):
         self._candidates: list[tuple[int, dict]] = []
@@ -94,11 +164,17 @@ class ApiSniffer:
         if score >= 3:
             self._candidates.append((score, body))
 
-    def best_result(self) -> dict | None:
+    async def best_result(self) -> dict | None:
         if not self._candidates:
             return None
-        _, body = max(self._candidates, key=lambda x: x[0])
-        sizes = _extract_sizes_from_json(body)
-        if not sizes:
-            return None
-        return {"source": "api", "product_id": None, "type": "", "sizes": sizes}
+        # 점수 높은 순으로 시도
+        for _, body in sorted(self._candidates, key=lambda x: x[0], reverse=True):
+            # 1. 패턴 매칭
+            sizes = _extract_sizes_from_json(body)
+            if sizes:
+                return {"source": "api", "product_id": None, "type": "", "sizes": sizes}
+            # 2. Claude 폴백
+            sizes = await _extract_with_claude(body)
+            if sizes:
+                return {"source": "api", "product_id": None, "type": "", "sizes": sizes}
+        return None
