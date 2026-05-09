@@ -3,6 +3,7 @@ from playwright.async_api import Page, async_playwright
 
 from .normalizer import normalize
 from .strategies import api_sniff, dom, image_vllm
+from .usage import UsageTracker
 
 _HEADERS = {
     "User-Agent": (
@@ -126,6 +127,8 @@ def _collect_lazy_image_urls(html: str, base_url: str) -> list[str]:
 
 
 async def fetch_sizes(url: str) -> dict:
+    tracker = UsageTracker()
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(extra_http_headers=_HEADERS)
@@ -168,31 +171,35 @@ async def fetch_sizes(url: str) -> dict:
         html = await page.content()
         await browser.close()
 
+    def _with_usage(result: dict) -> dict:
+        if tracker.calls:
+            result["usage"] = tracker.summary()
+        return result
+
     # 1. DOM 탐색 — drawer HTML 우선 시도
     if drawer_html:
         result = dom.extract(drawer_html)
         if result:
-            return normalize(result)
+            return _with_usage(normalize(result))
 
     result = dom.extract(html)
     if result:
-        return normalize(result)
+        return _with_usage(normalize(result))
 
     # 2. API 스니핑
-    result = await sniffer.best_result()
+    result = await sniffer.best_result(tracker=tracker)
     if result:
-        return normalize(result)
+        return _with_usage(normalize(result))
 
     # 3. 이미지 VLLM — lazy 속성 URL 우선, 네트워크 인터셉트 폴백
     lazy_urls = _collect_lazy_image_urls(html, url)
     intercepted_urls = [u for _, u in sorted(intercepted_images, reverse=True)]
     image_urls = lazy_urls + intercepted_urls
-    # 중복 제거, 순서 유지
     seen: set[str] = set()
     image_urls = [u for u in image_urls if not (u in seen or seen.add(u))]
-    result = await image_vllm.extract_from_urls(image_urls)
+    result = await image_vllm.extract_from_urls(image_urls, tracker=tracker)
     if result:
-        return normalize(result)
+        return _with_usage(normalize(result))
 
     import os
     if not os.environ.get("ANTHROPIC_API_KEY"):

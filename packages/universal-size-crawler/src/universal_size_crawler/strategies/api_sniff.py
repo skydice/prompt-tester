@@ -112,26 +112,28 @@ def _search_list(lst) -> dict[str, dict[str, str]] | None:
     return None
 
 
-async def _extract_with_claude(body: dict) -> dict[str, dict[str, str]] | None:
+async def _extract_with_claude(body: dict, tracker=None) -> dict[str, dict[str, str]] | None:
     """패턴 매칭 실패 시 Claude로 JSON 구조 해석."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
     try:
         from anthropic import AsyncAnthropic
         ac = AsyncAnthropic()
-        # 너무 큰 JSON은 핵심 부분만 전달 (토큰 절약)
+        model = "claude-haiku-4-5-20251001"
         json_str = json.dumps(body, ensure_ascii=False)
         if len(json_str) > 8000:
             json_str = json_str[:8000] + "\n...(truncated)"
 
         response = await ac.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=model,
             max_tokens=512,
             messages=[{
                 "role": "user",
                 "content": _CLAUDE_EXTRACT_PROMPT + json_str,
             }],
         )
+        if tracker:
+            tracker.record(model, response.usage.input_tokens, response.usage.output_tokens, "api-extract")
         text = response.content[0].text
         match = re.search(r"\{.*\}", text, re.S)
         if not match:
@@ -164,17 +166,14 @@ class ApiSniffer:
         if score >= 3:
             self._candidates.append((score, body))
 
-    async def best_result(self) -> dict | None:
+    async def best_result(self, tracker=None) -> dict | None:
         if not self._candidates:
             return None
-        # 점수 높은 순으로 시도
         for _, body in sorted(self._candidates, key=lambda x: x[0], reverse=True):
-            # 1. 패턴 매칭
             sizes = _extract_sizes_from_json(body)
             if sizes:
                 return {"source": "api", "product_id": None, "type": "", "sizes": sizes}
-            # 2. Claude 폴백
-            sizes = await _extract_with_claude(body)
+            sizes = await _extract_with_claude(body, tracker=tracker)
             if sizes:
                 return {"source": "api", "product_id": None, "type": "", "sizes": sizes}
         return None
