@@ -126,7 +126,7 @@ def _collect_lazy_image_urls(html: str, base_url: str) -> list[str]:
     return urls
 
 
-async def fetch_sizes(url: str) -> dict:
+async def fetch_sizes(url: str, api_key: str = "") -> dict:
     tracker = UsageTracker()
 
     async with async_playwright() as p:
@@ -197,7 +197,7 @@ async def fetch_sizes(url: str) -> dict:
     image_urls = lazy_urls + intercepted_urls
     seen: set[str] = set()
     image_urls = [u for u in image_urls if not (u in seen or seen.add(u))]
-    result = await image_vllm.extract_from_urls(image_urls, tracker=tracker)
+    result = await image_vllm.extract_from_urls(image_urls, tracker=tracker, api_key=api_key)
     if result:
         return _with_usage(normalize(result))
 

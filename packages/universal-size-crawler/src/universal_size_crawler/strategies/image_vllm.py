@@ -41,7 +41,7 @@ _LOCATE_PROMPT = """이 이미지에서 의류 사이즈 차트(SIZE MEASUREMENT
 JSON만 반환."""
 
 
-async def _locate_size_region(img: Image.Image, tracker=None) -> tuple[int, int] | None:
+async def _locate_size_region(img: Image.Image, tracker=None, api_key: str = "") -> tuple[int, int] | None:
     """Vision 1pass — 썸네일로 사이즈표 y 범위 탐지."""
     w, h = img.size
     if h > 1200:
@@ -51,7 +51,7 @@ async def _locate_size_region(img: Image.Image, tracker=None) -> tuple[int, int]
         thumb = img
 
     from anthropic import AsyncAnthropic
-    ac = AsyncAnthropic()
+    ac = AsyncAnthropic(api_key=api_key) if api_key else AsyncAnthropic()
     model = "claude-haiku-4-5-20251001"
     response = await ac.messages.create(
         model=model,
@@ -114,16 +114,16 @@ def _parse_vision_response(text: str) -> dict[str, dict[str, str]] | None:
     return None
 
 
-def _has_api_key() -> bool:
+def _has_api_key(api_key: str = "") -> bool:
     import os
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return bool(api_key or os.environ.get("ANTHROPIC_API_KEY"))
 
 
 async def _ask_vision(
-    client, img: Image.Image, tracker=None
+    client, img: Image.Image, tracker=None, api_key: str = ""
 ) -> dict[str, dict[str, str]] | None:
     from anthropic import AsyncAnthropic
-    ac = AsyncAnthropic()
+    ac = AsyncAnthropic(api_key=api_key) if api_key else AsyncAnthropic()
     model = "claude-sonnet-4-6"
     response = await ac.messages.create(
         model=model,
@@ -209,23 +209,23 @@ def _merge_sizes(a: dict, b: dict) -> dict:
     return merged
 
 
-async def _process_image(img: Image.Image, client, tracker=None) -> dict[str, dict[str, str]] | None:
+async def _process_image(img: Image.Image, client, tracker=None, api_key: str = "") -> dict[str, dict[str, str]] | None:
     """단일 이미지에서 사이즈 추출 — Vision 2pass (위치 탐지 → 정밀 추출) → 슬라이싱 폴백."""
     w, h = img.size
 
     # 1pass: 썸네일로 사이즈표 위치 탐지
-    region = await _locate_size_region(img, tracker=tracker)
+    region = await _locate_size_region(img, tracker=tracker, api_key=api_key)
     if region:
         y_start, y_end = region
         crop = img.crop((0, y_start, w, y_end))
-        sizes = await _ask_vision(client, crop, tracker=tracker)
+        sizes = await _ask_vision(client, crop, tracker=tracker, api_key=api_key)
         if sizes:
             return sizes
 
     # 슬라이싱 폴백: 각 chunk 결과 병합, 충분한 결과 나오면 조기 종료
     merged: dict = {}
     for chunk in _slice_image(img):
-        sizes = await _ask_vision(client, chunk, tracker=tracker)
+        sizes = await _ask_vision(client, chunk, tracker=tracker, api_key=api_key)
         if sizes:
             merged = _merge_sizes(merged, sizes)
             if _is_complete(merged):
@@ -234,11 +234,11 @@ async def _process_image(img: Image.Image, client, tracker=None) -> dict[str, di
     return merged if merged else None
 
 
-async def extract_from_urls(image_urls: list[str], tracker=None) -> dict | None:
+async def extract_from_urls(image_urls: list[str], tracker=None, api_key: str = "") -> dict | None:
     """네트워크 인터셉트로 수집한 실제 이미지 URL 목록에서 사이즈 추출."""
     if not image_urls:
         return None
-    if not _has_api_key():
+    if not _has_api_key(api_key):
         return None
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -258,7 +258,7 @@ async def extract_from_urls(image_urls: list[str], tracker=None) -> dict | None:
             if not _has_text(img_bytes):
                 continue
 
-            sizes = await _process_image(img, client, tracker=tracker)
+            sizes = await _process_image(img, client, tracker=tracker, api_key=api_key)
             if sizes:
                 return {"source": "image", "product_id": None, "type": "", "sizes": sizes}
 

@@ -14,7 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from prompts.personal_fitting import build_prompt
-from size_crawler import fetch_sizes
+from size_crawler import fetch_sizes as fetch_sizes_known
+from universal_size_crawler.agent import fetch_sizes as universal_fetch_sizes
 
 app = FastAPI()
 
@@ -196,8 +197,11 @@ def delete_wearing(index: int, user_id: str):
 # ── 크롤러 ────────────────────────────────────────────────────────────────────
 
 @app.get("/crawl")
-def crawl(url: str):
-    return fetch_sizes(url)
+async def crawl(url: str, anthropic_key: str = ""):
+    known_brands = ("musinsa.com", "uniqlo.com")
+    if any(b in url for b in known_brands):
+        return fetch_sizes_known(url)
+    return await universal_fetch_sizes(url, api_key=anthropic_key)
 
 
 # ── 프롬프트 ──────────────────────────────────────────────────────────────────
@@ -294,9 +298,10 @@ async def _stream_gemini(api_key: str, model: str, system: str, user: str, queue
             system_instruction=system,
             max_output_tokens=700,
         )
-        async for chunk in client.aio.models.generate_content_stream(
+        stream = await client.aio.models.generate_content_stream(
             model=model, contents=user, config=config,
-        ):
+        )
+        async for chunk in stream:
             if chunk.text:
                 await queue.put({"model": model, "type": "token", "text": chunk.text})
             if chunk.usage_metadata:

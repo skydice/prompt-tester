@@ -615,8 +615,18 @@ function markPromptModified() {
 
 let fetchedSizeChart = null   // 전체 사이즈 차트 {size: {항목: 값}}
 
+function _crawlUsageBadge(usage) {
+  if (!usage || !usage.total_cost_usd) return ''
+  const tok = (usage.total_input_tokens + usage.total_output_tokens).toLocaleString()
+  const cost = usage.total_cost_usd.toFixed(4)
+  return ` <span class="ml-1.5 inline-flex gap-1">
+    <span class="badge bg-gray-100 text-gray-500">${tok} tok</span>
+    <span class="badge bg-green-100 text-green-700">$${cost}</span>
+  </span>`
+}
+
 function isShopUrl(val) {
-  return val.includes('musinsa.com') || val.includes('uniqlo.com')
+  return /^https?:\/\/.+/.test(val.trim())
 }
 
 function onUrlInput(val) {
@@ -637,7 +647,10 @@ async function fetchSizes() {
   fetchedSizeChart = null
 
   try {
-    const res  = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
+    const anthropicKey = document.getElementById('anthropicKey').value.trim()
+    const params = new URLSearchParams({ url })
+    if (anthropicKey) params.set('anthropic_key', anthropicKey)
+    const res  = await fetch(`/crawl?${params}`)
     const data = await res.json()
 
     if (data.error) { status.textContent = '⚠️ ' + data.error; return }
@@ -671,7 +684,8 @@ async function fetchSizes() {
       for (const k of lookups) { if (firstSize[k]) { el.value = firstSize[k]; break } }
     })
 
-    status.textContent = `✓ ${data.type} 전체 사이즈 차트 로드 — ${sizeNames.join(', ')}`
+    const usagePart = _crawlUsageBadge(data.usage)
+    status.innerHTML = `✓ ${data.type || 'image'} 전체 사이즈 차트 로드 — ${sizeNames.join(', ')}${usagePart}`
     status.className = 'text-xs text-indigo-600 mt-1'
     status.classList.remove('hidden')
   } catch (e) {
@@ -730,7 +744,10 @@ async function fetchHistorySizes() {
   status.classList.add('hidden')
 
   try {
-    const res  = await fetch(`/crawl?url=${encodeURIComponent(url)}`)
+    const anthropicKey = document.getElementById('anthropicKey').value.trim()
+    const hParams = new URLSearchParams({ url })
+    if (anthropicKey) hParams.set('anthropic_key', anthropicKey)
+    const res  = await fetch(`/crawl?${hParams}`)
     const data = await res.json()
 
     if (data.error) {
@@ -743,7 +760,8 @@ async function fetchHistorySizes() {
     historyFetchedSizeData = data.sizes
     renderSizeChips(Object.keys(data.sizes))
 
-    status.textContent = `✓ ${data.type} — ${Object.keys(data.sizes).join(', ')}`
+    const usagePart = _crawlUsageBadge(data.usage)
+    status.innerHTML = `✓ ${data.type || 'image'} — ${Object.keys(data.sizes).join(', ')}${usagePart}`
     status.className = 'text-xs text-indigo-500 mt-1'
     status.classList.remove('hidden')
   } catch (e) {

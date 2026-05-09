@@ -329,6 +329,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "openai" },
     { name = "size-crawler" },
+    { name = "universal-size-crawler" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -339,6 +340,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=0.8.0" },
     { name = "openai", specifier = ">=1.30.0" },
     { name = "size-crawler", editable = "packages/size-crawler" },
+    { name = "universal-size-crawler", editable = "packages/universal-size-crawler" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29.0" },
 ]
 

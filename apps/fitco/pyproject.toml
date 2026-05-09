@@ -10,7 +10,9 @@ dependencies = [
     "openai>=1.30.0",
     "google-genai>=0.8.0",
     "size-crawler",
+    "universal-size-crawler",
 ]
 
 [tool.uv.sources]
 size-crawler = { workspace = true }
+universal-size-crawler = { workspace = true }
