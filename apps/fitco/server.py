@@ -250,7 +250,10 @@ async def _stream_anthropic(client, model, system, user, queue):
 
     elapsed  = time.perf_counter() - start
     pricing  = MODELS[model]
-    cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    try:
+        cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    except Exception:
+        cost_usd = 0.0
     await queue.put({"model": model, "type": "done", "latency_sec": round(elapsed, 2),
                      "input_tokens": input_tokens, "output_tokens": output_tokens,
                      "cost_usd": round(cost_usd, 6)})
@@ -264,7 +267,7 @@ async def _stream_openai(client, model, system, user, queue):
         stream = await client.chat.completions.create(
             model=model, stream=True,
             stream_options={"include_usage": True},
-            **({"max_completion_tokens": 700} if is_o_series else {"max_tokens": 700}),
+            **({"max_completion_tokens": 4096} if is_o_series else {"max_tokens": 700}),
             messages=[
                 {"role": "developer" if is_o_series else "system", "content": system},
                 {"role": "user", "content": user},
@@ -275,15 +278,18 @@ async def _stream_openai(client, model, system, user, queue):
             if delta:
                 await queue.put({"model": model, "type": "token", "text": delta})
             if chunk.usage:
-                input_tokens  = chunk.usage.prompt_tokens
-                output_tokens = chunk.usage.completion_tokens
+                input_tokens  = chunk.usage.prompt_tokens or 0
+                output_tokens = chunk.usage.completion_tokens or 0
     except Exception as e:
         await queue.put({"model": model, "type": "error", "text": str(e)})
         return
 
     elapsed  = time.perf_counter() - start
     pricing  = MODELS[model]
-    cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    try:
+        cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    except Exception:
+        cost_usd = 0.0
     await queue.put({"model": model, "type": "done", "latency_sec": round(elapsed, 2),
                      "input_tokens": input_tokens, "output_tokens": output_tokens,
                      "cost_usd": round(cost_usd, 6)})
@@ -292,30 +298,48 @@ async def _stream_openai(client, model, system, user, queue):
 async def _stream_gemini(api_key: str, model: str, system: str, user: str, queue):
     start = time.perf_counter()
     input_tokens = output_tokens = 0
-    try:
-        client = google_genai.Client(api_key=api_key)
-        config = genai_types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=700,
-        )
-        stream = await client.aio.models.generate_content_stream(
-            model=model, contents=user, config=config,
-        )
-        async for chunk in stream:
-            if chunk.text:
-                await queue.put({"model": model, "type": "token", "text": chunk.text})
-            if chunk.usage_metadata:
-                if chunk.usage_metadata.prompt_token_count:
-                    input_tokens = chunk.usage_metadata.prompt_token_count
-                if chunk.usage_metadata.candidates_token_count:
-                    output_tokens = chunk.usage_metadata.candidates_token_count
-    except Exception as e:
-        await queue.put({"model": model, "type": "error", "text": str(e)})
+    last_error: Exception | None = None
+
+    for attempt in range(3):
+        if attempt > 0:
+            await asyncio.sleep(5 * attempt)
+        input_tokens = output_tokens = 0
+        try:
+            gclient = google_genai.Client(api_key=api_key)
+            config = genai_types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=700,
+            )
+            stream = await gclient.aio.models.generate_content_stream(
+                model=model, contents=user, config=config,
+            )
+            async for chunk in stream:
+                if chunk.text:
+                    await queue.put({"model": model, "type": "token", "text": chunk.text})
+                if chunk.usage_metadata:
+                    if chunk.usage_metadata.prompt_token_count:
+                        input_tokens = chunk.usage_metadata.prompt_token_count
+                    if chunk.usage_metadata.candidates_token_count:
+                        output_tokens = chunk.usage_metadata.candidates_token_count
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            if "429" in str(e) and attempt < 2:
+                continue
+            await queue.put({"model": model, "type": "error", "text": str(e)})
+            return
+
+    if last_error is not None:
+        await queue.put({"model": model, "type": "error", "text": str(last_error)})
         return
 
     elapsed  = time.perf_counter() - start
     pricing  = MODELS[model]
-    cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    try:
+        cost_usd = input_tokens / 1e6 * pricing["input"] + output_tokens / 1e6 * pricing["output"]
+    except Exception:
+        cost_usd = 0.0
     await queue.put({"model": model, "type": "done", "latency_sec": round(elapsed, 2),
                      "input_tokens": input_tokens, "output_tokens": output_tokens,
                      "cost_usd": round(cost_usd, 6)})
