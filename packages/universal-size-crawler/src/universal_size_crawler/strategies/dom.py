@@ -121,19 +121,59 @@ def _parse_table(table) -> dict[str, dict[str, str]] | None:
     return sizes if sizes else None
 
 
+# 텍스트 형식 사이즈 파싱 — "XS_총장61.5 어깨41 ..." 패턴
+_SIZE_TEXT_TRIGGER = re.compile(
+    r"(XS|XXL|2XL|XL|S|M|L|FREE)_(총장|어깨|가슴|허리|엉덩이|밑위|허벅지|소매|암홀|팔길이|밑단|넥|목)\d",
+    re.I,
+)
+_SIZE_LABEL_SPLIT = re.compile(r"(XS|XXL|2XL|XL|S|M|L|FREE)_", re.I)
+_MEASURE_PAIR = re.compile(
+    r"(총장|어깨|가슴|허리|엉덩이|밑위|허벅지|소매|암홀|팔길이|밑단|넥|목)(\d+\.?\d*)"
+)
+
+
+def _parse_text_sizes(text: str) -> dict[str, dict[str, str]] | None:
+    """'XS_총장61.5 어깨41 가슴49.5 ...' 형식 텍스트 → 구조화된 사이즈 dict."""
+    if not _SIZE_TEXT_TRIGGER.search(text):
+        return None
+
+    # SIZE_ 기준으로 분리 → [prefix, 'XS', '총장61.5 어깨41 ...', 'S', '총장63 ...', ...]
+    parts = _SIZE_LABEL_SPLIT.split(text)
+    sizes: dict[str, dict[str, str]] = {}
+    i = 1
+    while i + 1 < len(parts):
+        label = parts[i].upper()
+        chunk = parts[i + 1]
+        measurements = {
+            m.group(1): f"{m.group(2)}cm"
+            for m in _MEASURE_PAIR.finditer(chunk)
+        }
+        if measurements:
+            sizes[label] = measurements
+        i += 2
+
+    return sizes if sizes else None
+
+
 def extract(html: str) -> dict | None:
     soup = BeautifulSoup(html, "lxml")
 
+    # 1순위: HTML 테이블
     tables = soup.find_all("table")
-    if not tables:
-        return None
+    if tables:
+        best = max(tables, key=_score_table)
+        if _score_table(best) >= 3:
+            sizes = _parse_table(best)
+            if sizes:
+                return {"source": "dom", "product_id": None, "type": "", "sizes": sizes}
 
-    best = max(tables, key=_score_table)
-    if _score_table(best) < 3:
-        return None
+    # 2순위: 텍스트 형식 ("XS_총장61.5 어깨41 ..." 패턴)
+    for el in soup.find_all(["ul", "li", "p", "div", "span"]):
+        text = el.get_text(separator=" ", strip=True)
+        if len(text) > 2000:
+            continue
+        sizes = _parse_text_sizes(text)
+        if sizes:
+            return {"source": "dom-text", "product_id": None, "type": "", "sizes": sizes}
 
-    sizes = _parse_table(best)
-    if not sizes:
-        return None
-
-    return {"source": "dom", "product_id": None, "type": "", "sizes": sizes}
+    return None
