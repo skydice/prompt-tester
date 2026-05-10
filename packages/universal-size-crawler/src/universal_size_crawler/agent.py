@@ -153,12 +153,12 @@ async def fetch_sizes(url: str, api_key: str = "") -> dict:
         page.on("response", _on_image_response)
 
         try:
-            await page.goto(url, wait_until="load", timeout=20_000)
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(2_000)  # XHR 완료 대기
+            await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
         except Exception as e:
             await browser.close()
             return {"error": f"페이지 로드 실패: {e}"}
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await page.wait_for_timeout(3_000)  # XHR/iframe 완료 대기
 
         # 사이즈 가이드 버튼 클릭 시도
         opened = await _try_open_size_drawer(page)
@@ -169,6 +169,19 @@ async def fetch_sizes(url: str, api_key: str = "") -> dict:
             drawer_html = await _extract_drawer_html(page)
 
         html = await page.content()
+
+        # iframe 내 사이즈 차트 수집 (snapfit 등 서드파티 사이즈 서비스)
+        frame_htmls: list[str] = []
+        for frame in page.frames[1:]:  # 메인 프레임 제외
+            frame_url = frame.url
+            if not frame_url or frame_url in ("about:blank", "") or "google" in frame_url or "facebook" in frame_url or "criteo" in frame_url or "kakao" in frame_url:
+                continue
+            try:
+                fhtml = await frame.content()
+                frame_htmls.append(fhtml)
+            except Exception:
+                continue
+
         await browser.close()
 
     def _with_usage(result: dict) -> dict:
@@ -176,7 +189,7 @@ async def fetch_sizes(url: str, api_key: str = "") -> dict:
             result["usage"] = tracker.summary()
         return result
 
-    # 1. DOM 탐색 — drawer HTML 우선 시도
+    # 1. DOM 탐색 — drawer HTML 우선, 메인 페이지, iframe 순
     if drawer_html:
         result = dom.extract(drawer_html)
         if result:
@@ -185,6 +198,11 @@ async def fetch_sizes(url: str, api_key: str = "") -> dict:
     result = dom.extract(html)
     if result:
         return _with_usage(normalize(result))
+
+    for fhtml in frame_htmls:
+        result = dom.extract(fhtml)
+        if result:
+            return _with_usage(normalize(result))
 
     # 2. API 스니핑
     result = await sniffer.best_result(tracker=tracker)
