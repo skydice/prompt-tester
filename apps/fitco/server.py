@@ -1,8 +1,12 @@
 import asyncio
 import json
+import os
 import time
 import uuid
 from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()  # apps/fitco/.env 자동 로드
 
 import anthropic
 import openai as openai_sdk
